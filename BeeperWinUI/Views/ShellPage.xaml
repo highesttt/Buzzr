@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:BeeperWinUI.Views"
     RequestedTheme="Dark"
-    Background="#1F2021">
+    Background="Transparent">
 
     <Grid>
         <Grid.ColumnDefinitions>
@@ -15,7 +15,7 @@
 
         <!-- Sidebar -->
         <Border Grid.Column="0" BorderBrush="#1A1E20" BorderThickness="0,0,1,0">
-            <Grid Background="#242424">
+            <Grid Background="#E6242424">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -30,7 +30,7 @@
                 <Button x:Name="AllChatsBtn" Grid.Row="1"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
-                        HorizontalAlignment="Center" Margin="0,4,0,4"
+                        HorizontalAlignment="Center" Margin="0,4,0,14"
                         ToolTipService.ToolTip="All chats">
                     <FontIcon Glyph="&#xE8BD;" FontSize="16" Foreground="#4CC2FF"/>
                 </Button>
@@ -39,7 +39,7 @@
                 <ScrollViewer Grid.Row="2"
                               VerticalScrollBarVisibility="Hidden"
                               HorizontalAlignment="Center"
-                              Padding="0,4,0,4">
+                              Padding="0,12,0,4">
                     <StackPanel x:Name="AccountIconsStack" Spacing="4"/>
                 </ScrollViewer>
 
@@ -73,7 +73,8 @@
         </Border>
 
         <!-- Chat list -->
-        <Border Grid.Column="1" BorderBrush="#1A1E20" BorderThickness="0,0,1,0">
+        <Border Grid.Column="1" BorderBrush="#1A1E20" BorderThickness="0,0,1,0"
+                Background="#E6242424">
             <local:ChatListControl x:Name="ChatList"/>
         </Border>
 

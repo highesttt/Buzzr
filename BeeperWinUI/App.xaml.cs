@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Windowing;
+using Microsoft.Windows.AppNotifications;
 using WinRT.Interop;
 using BeeperWinUI.Services;
 using BeeperWinUI.Views;
@@ -18,6 +19,7 @@ public partial class App : Application
     public static SettingsService Settings { get; } = new();
     public static Window? MainWindow { get; private set; }
     public static Frame? RootFrame { get; private set; }
+    public static bool IsWindowFocused { get; private set; } = true;
 
     public App() { this.InitializeComponent(); }
 
@@ -26,8 +28,15 @@ public partial class App : Application
         _window = new Window { Title = "Beeper" };
         MainWindow = _window;
 
-        // Mica backdrop
-        try { _window.SystemBackdrop = new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt }; } catch { }
+        // Mica backdrop with DesktopAcrylic fallback
+        try
+        {
+            _window.SystemBackdrop = new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt };
+        }
+        catch
+        {
+            try { _window.SystemBackdrop = new DesktopAcrylicBackdrop(); } catch { }
+        }
 
         // Extended title bar
         _window.ExtendsContentIntoTitleBar = true;
@@ -55,12 +64,19 @@ public partial class App : Application
         RootFrame = _rootFrame;
 
         // Wrap frame in a Grid with title bar drag region to prevent resize glitches
-        var rootGrid = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x1F, 0x20, 0x21)) };
+        var rootGrid = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)) };
         rootGrid.Children.Add(_rootFrame);
         _window.Content = rootGrid;
 
         // App-level keyboard shortcuts
         _window.Content.KeyDown += OnGlobalKeyDown;
+
+        _window.Activated += (s, e) =>
+        {
+            IsWindowFocused = e.WindowActivationState != WindowActivationState.Deactivated;
+        };
+
+        try { AppNotificationManager.Default.Register(); } catch { }
 
         ShowSetup();
         _window.Activate();
@@ -101,6 +117,11 @@ public partial class App : Application
             // Ctrl+Shift+N: new chat dialog
             e.Handled = true;
             ShellPage.OpenNewChat?.Invoke();
+        }
+        else if (ctrl && !shift && e.Key == (Windows.System.VirtualKey)192) // Ctrl+` (backtick)
+        {
+            e.Handled = true;
+            ShellPage.OpenTerminal?.Invoke();
         }
         else if (e.Key == Windows.System.VirtualKey.Escape)
         {

@@ -12,6 +12,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Header -->
@@ -164,8 +165,22 @@
             </ScrollViewer>
         </Border>
 
+        <!-- Scheduled messages indicator -->
+        <Border x:Name="ScheduledBar" Grid.Row="5"
+                Background="#2B2B2B" BorderBrush="#1A1E20"
+                BorderThickness="0,1,0,0" Padding="16,6,16,6"
+                Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <FontIcon Glyph="&#xE823;" FontSize="12" Foreground="#4CC2FF"
+                          VerticalAlignment="Center"/>
+                <TextBlock x:Name="ScheduledBarText" FontSize="12"
+                           Foreground="#A1A1A1" FontFamily="Segoe UI"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
         <!-- Composer -->
-        <Border x:Name="Composer" Grid.Row="5"
+        <Border x:Name="Composer" Grid.Row="6"
                 Background="#242424" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,12,16,16"
                 Visibility="Collapsed">
@@ -173,6 +188,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
@@ -215,6 +231,14 @@
                         Background="Transparent" BorderThickness="0"
                         IsEnabled="False">
                     <FontIcon Glyph="&#xE724;" FontSize="16" Foreground="#4CC2FF"/>
+                </Button>
+
+                <!-- Schedule send button -->
+                <Button x:Name="ScheduleBtn" Grid.Column="5"
+                        Width="28" Height="36" Padding="0"
+                        Background="Transparent" BorderThickness="0"
+                        ToolTipService.ToolTip="Schedule send">
+                    <FontIcon Glyph="&#xE823;" FontSize="14" Foreground="#A1A1A1"/>
                 </Button>
             </Grid>
         </Border>

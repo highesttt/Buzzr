@@ -55,6 +55,16 @@ public sealed partial class MessageView : UserControl
     }
     private readonly List<StagedAttachment> _stagedAttachments = [];
 
+    private class ScheduledMessage
+    {
+        public string ChatId { get; set; } = "";
+        public string Text { get; set; } = "";
+        public DateTimeOffset SendAt { get; set; }
+        public List<StagedAttachment> Attachments { get; set; } = [];
+    }
+    private static readonly List<ScheduledMessage> _scheduledMessages = [];
+    private readonly DispatcherTimer _scheduleTimer;
+
     public MessageView()
     {
         this.InitializeComponent();
@@ -129,6 +139,12 @@ public sealed partial class MessageView : UserControl
         ChatSearchClose.Click += (s, e) => CloseChatSearch();
         ChatSearchBox.TextChanged += (s, e) => _ = OnChatSearchChangedAsync();
         MsgScroll.ViewChanged += OnScrollViewChanged;
+
+        ScheduleBtn.Click += (s, e) => ShowScheduleFlyout();
+
+        _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _scheduleTimer.Tick += (s, e) => _ = ProcessScheduledMessagesAsync();
+        _scheduleTimer.Start();
     }
 
     public void CloseOverlays()
@@ -365,6 +381,9 @@ public sealed partial class MessageView : UserControl
 
         RenderMessages(_allMessages);
         ScrollToBottom();
+        UpdateScheduledBar();
+
+        _ = App.Api.MarkChatReadAsync(chat.Id);
     }
 
     private async Task LoadEarlierMessagesAsync()
@@ -767,15 +786,6 @@ public sealed partial class MessageView : UserControl
             var editItem = new MenuFlyoutItem { Text = "Edit", Icon = new FontIcon { Glyph = "\uE70F" } };
             editItem.Click += (s, e) => StartEdit(m);
             flyout.Items.Add(editItem);
-
-            var deleteItem = new MenuFlyoutItem
-            {
-                Text = "Delete",
-                Icon = new FontIcon { Glyph = "\uE74D", Foreground = B(Err) },
-                Foreground = B(Err)
-            };
-            deleteItem.Click += (s, e) => _ = DeleteMessageAsync(m);
-            flyout.Items.Add(deleteItem);
         }
 
         return flyout;
@@ -836,11 +846,17 @@ public sealed partial class MessageView : UserControl
         if (_chatId == null) return;
         try
         {
-            // TODO: Actually delete instead of just editing to "[message deleted]"
-            await App.Api.EditMessageAsync(_chatId, m.Id, "[message deleted]");
-            _allMessages.RemoveAll(x => x.Id == m.Id);
-            _messageMap.Remove(m.Id);
-            RenderMessages(_allMessages);
+            var ok = await App.Api.DeleteMessageAsync(_chatId, m.Id);
+            if (ok)
+            {
+                _allMessages.RemoveAll(x => x.Id == m.Id);
+                _messageMap.Remove(m.Id);
+                RenderMessages(_allMessages);
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[Delete] Failed: {App.Api.LastError}");
+            }
         }
         catch { }
     }
@@ -1034,6 +1050,7 @@ public sealed partial class MessageView : UserControl
             var launchUrl = resolvedUrl;
             container.PointerPressed += (s, e) =>
             {
+                if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
                 try { _ = Windows.System.Launcher.LaunchUriAsync(new Uri(launchUrl)); }
                 catch { }
             };
@@ -1516,6 +1533,130 @@ public sealed partial class MessageView : UserControl
         visual.StartAnimation("Offset", slideAnim);
     }
 
+    private void ShowScheduleFlyout()
+    {
+        if (_chatId == null || (string.IsNullOrWhiteSpace(MsgInput.Text) && _stagedAttachments.Count == 0)) return;
+
+        var flyout = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Top };
+
+        var opt15 = new MenuFlyoutItem { Text = "In 15 minutes" };
+        opt15.Click += (s, e) => ScheduleWith(DateTimeOffset.Now.AddMinutes(15));
+        flyout.Items.Add(opt15);
+
+        var opt1h = new MenuFlyoutItem { Text = "In 1 hour" };
+        opt1h.Click += (s, e) => ScheduleWith(DateTimeOffset.Now.AddHours(1));
+        flyout.Items.Add(opt1h);
+
+        var opt3h = new MenuFlyoutItem { Text = "In 3 hours" };
+        opt3h.Click += (s, e) => ScheduleWith(DateTimeOffset.Now.AddHours(3));
+        flyout.Items.Add(opt3h);
+
+        var optMorn = new MenuFlyoutItem { Text = "Tomorrow morning (9 AM)" };
+        optMorn.Click += (s, e) =>
+        {
+            var tomorrow = DateTimeOffset.Now.Date.AddDays(1).AddHours(9);
+            ScheduleWith(new DateTimeOffset(tomorrow, DateTimeOffset.Now.Offset));
+        };
+        flyout.Items.Add(optMorn);
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+
+        var optCustom = new MenuFlyoutItem { Text = "Custom..." };
+        optCustom.Click += (s, e) => _ = ShowCustomScheduleAsync();
+        flyout.Items.Add(optCustom);
+
+        flyout.ShowAt(ScheduleBtn);
+    }
+
+    private void ScheduleWith(DateTimeOffset sendAt)
+    {
+        if (_chatId == null) return;
+        var sm = new ScheduledMessage
+        {
+            ChatId = _chatId,
+            Text = MsgInput.Text?.Trim() ?? "",
+            SendAt = sendAt,
+            Attachments = _stagedAttachments.Count > 0 ? _stagedAttachments.ToList() : []
+        };
+        _scheduledMessages.Add(sm);
+        MsgInput.Text = "";
+        _stagedAttachments.Clear();
+        RenderStagedAttachments();
+        SendBtn.IsEnabled = false;
+        UpdateScheduledBar();
+    }
+
+    private async Task ShowCustomScheduleAsync()
+    {
+        var panel = new StackPanel { Spacing = 12, MinWidth = 280 };
+        var dp = new DatePicker { Date = DateTimeOffset.Now };
+        var tp = new TimePicker { Time = DateTimeOffset.Now.TimeOfDay, ClockIdentifier = "12HourClock" };
+        panel.Children.Add(Lbl("Pick date & time", 14, Fg1, true));
+        panel.Children.Add(dp);
+        panel.Children.Add(tp);
+
+        var dlg = new ContentDialog
+        {
+            Title = "Schedule message",
+            Content = panel,
+            PrimaryButtonText = "Schedule",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            RequestedTheme = ElementTheme.Dark
+        };
+        if (await dlg.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var date = dp.Date.Date;
+            var time = tp.Time;
+            var sendAt = new DateTimeOffset(date + time, DateTimeOffset.Now.Offset);
+            if (sendAt > DateTimeOffset.Now)
+                ScheduleWith(sendAt);
+        }
+    }
+
+    private async Task ProcessScheduledMessagesAsync()
+    {
+        var due = _scheduledMessages.Where(m => m.SendAt <= DateTimeOffset.Now).ToList();
+        foreach (var sm in due)
+        {
+            try
+            {
+                if (sm.Attachments is { Count: > 0 })
+                {
+                    foreach (var att in sm.Attachments)
+                    {
+                        var base64 = Convert.ToBase64String(att.Bytes);
+                        var asset = await App.Api.UploadBase64Async(base64, att.FileName, att.MimeType);
+                        if (asset?.UploadID != null)
+                            await App.Api.SendMessageWithAttachmentAsync(sm.ChatId, sm.Text, asset.UploadID, att.MimeType, att.FileName);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(sm.Text))
+                {
+                    await App.Api.SendMessageAsync(sm.ChatId, sm.Text);
+                }
+            }
+            catch { }
+            _scheduledMessages.Remove(sm);
+        }
+        if (due.Count > 0)
+            UpdateScheduledBar();
+    }
+
+    private void UpdateScheduledBar()
+    {
+        var count = _scheduledMessages.Count(m => m.ChatId == _chatId);
+        if (count > 0)
+        {
+            ScheduledBarText.Text = count == 1 ? "1 scheduled message" : $"{count} scheduled messages";
+            ScheduledBar.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ScheduledBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
     private void ToggleGifPicker()
     {
         if (_gifFlyout != null)
@@ -1648,6 +1789,7 @@ public sealed partial class MessageView : UserControl
                 var capturedGif = gif;
                 border.PointerPressed += (s, e) =>
                 {
+                    if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
                     _gifFlyout?.Hide();
                     _ = SendGifAsync(capturedGif);
                 };

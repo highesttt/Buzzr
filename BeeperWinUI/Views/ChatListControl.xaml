@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     RequestedTheme="Dark">
 
-    <Grid Background="#242424">
+    <Grid Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -35,7 +35,7 @@
 
         <!-- Tab filters -->
         <StackPanel x:Name="TabBar" Grid.Row="2" Orientation="Horizontal"
-                    Spacing="0" Margin="8,0,8,4">
+                    Spacing="0" Margin="8,4,8,8">
             <Button x:Name="TabAll" Content="All" FontSize="12" Height="28"
                     Padding="10,0,10,0" Background="#2D2D2D" Foreground="#F3F3F3"
                     CornerRadius="4,0,0,4" BorderThickness="0"/>
@@ -46,6 +46,9 @@
                     Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
                     CornerRadius="0" BorderThickness="0"/>
             <Button x:Name="TabArchived" Content="Archived" FontSize="12" Height="28"
+                    Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
+                    CornerRadius="0" BorderThickness="0"/>
+            <Button x:Name="TabLowPriority" Content="Low Priority" FontSize="12" Height="28"
                     Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
                     CornerRadius="0,4,4,0" BorderThickness="0"/>
         </StackPanel>

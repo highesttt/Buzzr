@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using System.Diagnostics;
 using BeeperWinUI.Services;
 using static BeeperWinUI.Theme.T;
 
@@ -23,6 +24,7 @@ public sealed partial class ShellPage : Page
     public static Action? FocusSearch;
     public static Action? OpenNewChat;
     public static Action? CloseOverlays;
+    public static Action? OpenTerminal;
 
     public ShellPage()
     {
@@ -30,6 +32,7 @@ public sealed partial class ShellPage : Page
 
         ChatList.ChatSelected += (chat) => _ = MessagePanel.LoadChat(chat);
         ChatList.MessageReceived += (chatId, msgJson) => MessagePanel.OnNewMessage(chatId, msgJson);
+        ChatList.ChatsLoaded += UpdateDiscordSubIcons;
 
         AllChatsBtn.Click += (s, e) =>
         {
@@ -44,6 +47,7 @@ public sealed partial class ShellPage : Page
         FocusSearch = () => ChatList.FocusSearchBox();
         OpenNewChat = () => _ = ShowNewChatDialogAsync();
         CloseOverlays = () => MessagePanel.CloseOverlays();
+        OpenTerminal = () => _ = ShowTerminalAsync();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -58,6 +62,7 @@ public sealed partial class ShellPage : Page
         FocusSearch = null;
         OpenNewChat = null;
         CloseOverlays = null;
+        OpenTerminal = null;
     }
 
     private async Task LoadAccountsAsync()
@@ -69,8 +74,15 @@ public sealed partial class ShellPage : Page
                 using var http = new HttpClient();
                 http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenStr);
                 var body = http.GetStringAsync("http://localhost:23373/v1/accounts").GetAwaiter().GetResult();
-                return JsonSerializer.Deserialize<List<BeeperAccount>>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                try { var list = JsonSerializer.Deserialize<List<BeeperAccount>>(body, opts); if (list?.Count > 0) return list; } catch { }
+                try { var w = JsonSerializer.Deserialize<AccountsResponse>(body, opts); var items = w?.Items ?? w?.Accounts; if (items?.Count > 0) return items; } catch { }
+                return new List<BeeperAccount>();
             });
+            AppLog.Write($"[Accounts] Loaded {_accounts.Count} accounts from API:");
+            foreach (var a in _accounts)
+                AppLog.Write($"  [{a.AccountId}] Network={a.Network}");
+
             ChatList.SetAccounts(_accounts);
             RenderAccountIcons();
             UpdateSettingsFlyout();
@@ -83,19 +95,10 @@ public sealed partial class ShellPage : Page
         AccountIconsStack.Children.Clear();
         foreach (var account in _accounts)
         {
-            var netColor = NetColor(account.AccountId);
-            var networkName = account.Network ?? NetName(account.AccountId);
+            var networkName = NetName(account.AccountId, account.Network);
             var iconContainer = new Grid { Width = 36, Height = 36 };
 
-            var iconBorder = new Border
-            {
-                Width = 32, Height = 32,
-                CornerRadius = new CornerRadius(16),
-                Background = B(netColor),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = NetLogoElement(account.AccountId, 14, Black)
-            };
+            var iconBorder = NetIcon(account.AccountId, 32, account.Network);
             iconContainer.Children.Add(iconBorder);
 
             var selIndicator = new Border
@@ -189,6 +192,98 @@ public sealed partial class ShellPage : Page
             allIcon.Foreground = B(_selectedAccountId == null ? Accent : Fg3);
     }
 
+    private void UpdateDiscordSubIcons()
+    {
+        // Detect accounts that have chats but weren't returned by /v1/accounts
+        var chatAccountIds = ChatList.GetAllChatAccountIds();
+        var knownIds = new HashSet<string>(_accounts.Select(a => a.AccountId));
+        int added = 0;
+        foreach (var aid in chatAccountIds)
+        {
+            if (!knownIds.Contains(aid))
+            {
+                AppLog.Write($"[Accounts] Missing from API, found in chats: {aid}");
+                var synthetic = new BeeperAccount { AccountId = aid };
+                _accounts.Add(synthetic);
+                knownIds.Add(aid);
+                added++;
+            }
+        }
+
+        if (added > 0)
+        {
+            AppLog.Write($"[Accounts] Added {added} synthetic account(s), re-rendering icons");
+            ChatList.SetAccounts(_accounts);
+            RenderAccountIcons();
+        }
+
+        // Log Discord space info for debugging
+        foreach (var account in _accounts)
+        {
+            var net = ResolveNetwork(account.AccountId, account.Network);
+            if (net == "discord")
+            {
+                var spaceIds = ChatList.GetDistinctSpaceIds(account.AccountId);
+                AppLog.Write($"[Discord] Account {account.AccountId}: {spaceIds.Count} space IDs found");
+                foreach (var sid in spaceIds.Take(5))
+                    AppLog.Write($"  SpaceId={sid}, Name={ChatList.GetSpaceName(account.AccountId, sid)}");
+            }
+        }
+
+        // For each Discord account with multiple spaces (servers), insert sub-icons
+        int insertOffset = 0;
+        for (int i = 0; i < _accounts.Count; i++)
+        {
+            var account = _accounts[i];
+            var net = ResolveNetwork(account.AccountId, account.Network);
+            if (net != "discord") continue;
+
+            var spaceIds = ChatList.GetDistinctSpaceIds(account.AccountId);
+            if (spaceIds.Count <= 1) continue;
+
+            int insertPos = i + 1 + insertOffset;
+            int serverNum = 0;
+            foreach (var spaceId in spaceIds)
+            {
+                serverNum++;
+                var spaceName = ChatList.GetSpaceName(account.AccountId, spaceId) ?? $"Server {serverNum}";
+
+                var subIcon = new Grid { Width = 36, Height = 36 };
+                var dot = NetDot(account.AccountId, 24, account.Network);
+                dot.HorizontalAlignment = HorizontalAlignment.Center;
+                dot.VerticalAlignment = VerticalAlignment.Center;
+                dot.Child = new TextBlock
+                {
+                    Text = spaceName.Length > 0 ? spaceName[0].ToString().ToUpper() : "?",
+                    FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Foreground = B(Microsoft.UI.Colors.White),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                subIcon.Children.Add(dot);
+                ToolTipService.SetToolTip(subIcon, spaceName);
+
+                var capturedAccountId = account.AccountId;
+                var capturedSpaceId = spaceId;
+                subIcon.PointerPressed += (s, _) =>
+                {
+                    _selectedAccountId = capturedAccountId;
+                    HighlightSelectedAccount();
+                    ChatList.FilterByAccount(capturedAccountId, capturedSpaceId);
+                };
+                subIcon.PointerEntered += (s, _) => dot.Opacity = 0.8;
+                subIcon.PointerExited += (s, _) => dot.Opacity = 1.0;
+
+                if (insertPos <= AccountIconsStack.Children.Count)
+                    AccountIconsStack.Children.Insert(insertPos, subIcon);
+                else
+                    AccountIconsStack.Children.Add(subIcon);
+                insertPos++;
+                insertOffset++;
+            }
+        }
+    }
+
     private void UpdateSettingsFlyout()
     {
         BeeperUser? selfUser = null;
@@ -234,6 +329,113 @@ public sealed partial class ShellPage : Page
         if (result == ContentDialogResult.Primary && dialog.SelectedChat != null)
         {
             _ = MessagePanel.LoadChat(dialog.SelectedChat);
+        }
+    }
+
+    private async Task ShowTerminalAsync()
+    {
+        var outputBlock = new TextBlock
+        {
+            Text = "Beeper WinUI Terminal v1.0\nType 'help' for available commands.\n\n> ",
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Code,Consolas,Courier New"),
+            FontSize = 13,
+            Foreground = B(Microsoft.UI.Colors.LimeGreen),
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        };
+
+        var inputBox = new TextBox
+        {
+            PlaceholderText = "Enter command...",
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Code,Consolas,Courier New"),
+            FontSize = 13,
+            Background = B(Windows.UI.Color.FromArgb(255, 10, 10, 10)),
+            Foreground = B(Microsoft.UI.Colors.LimeGreen),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            BorderBrush = B(Windows.UI.Color.FromArgb(100, 0, 255, 0)),
+            Padding = new Thickness(8, 6, 8, 6),
+        };
+
+        var scroll = new ScrollViewer
+        {
+            Content = outputBlock,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 320,
+        };
+
+        var panel = new StackPanel { Spacing = 0 };
+        panel.Children.Add(new Border
+        {
+            Child = scroll,
+            Background = B(Windows.UI.Color.FromArgb(255, 10, 10, 10)),
+            Padding = new Thickness(12, 10, 12, 6),
+            CornerRadius = new CornerRadius(4, 4, 0, 0),
+        });
+        panel.Children.Add(inputBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "\uE756  Terminal",
+            Content = panel,
+            CloseButtonText = "Close",
+            XamlRoot = this.XamlRoot,
+            RequestedTheme = ElementTheme.Dark,
+            MinWidth = 500,
+        };
+
+        // Style the dialog title
+        dialog.Resources["ContentDialogForeground"] = B(Microsoft.UI.Colors.LimeGreen);
+
+        inputBox.KeyDown += (s, e) =>
+        {
+            if (e.Key != Windows.System.VirtualKey.Enter) return;
+            e.Handled = true;
+            var cmd = inputBox.Text.Trim().ToLowerInvariant();
+            inputBox.Text = "";
+            var response = ExecuteTerminalCommand(cmd);
+            outputBlock.Text += cmd + "\n" + response + "\n> ";
+            scroll.ChangeView(null, scroll.ScrollableHeight + 200, null);
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    private string ExecuteTerminalCommand(string cmd)
+    {
+        switch (cmd)
+        {
+            case "help":
+                return "Available commands:\n" +
+                       "  censor    - Toggle censor mode (hide real names/messages)\n" +
+                       "  uncensor  - Disable censor mode\n" +
+                       "  status    - Show app status\n" +
+                       "  accounts  - List connected accounts\n" +
+                       "  clear     - (just close and reopen)\n" +
+                       "  help      - Show this message";
+
+            case "censor":
+                ChatList.SetCensorMode(true);
+                return "[OK] Censor mode enabled. All names and previews are now hidden.";
+
+            case "uncensor":
+                ChatList.SetCensorMode(false);
+                return "[OK] Censor mode disabled. Real data restored.";
+
+            case "status":
+                var connected = App.Api.IsConnected ? "Connected" : "Disconnected";
+                var censored = ChatList.IsCensored ? "ON" : "OFF";
+                return $"  Connection: {connected}\n  Accounts: {_accounts.Count}\n  Censor mode: {censored}";
+
+            case "accounts":
+                if (_accounts.Count == 0) return "  No accounts loaded.";
+                var sb = new System.Text.StringBuilder();
+                foreach (var a in _accounts)
+                    sb.AppendLine($"  [{ResolveNetwork(a.AccountId, a.Network)}] {a.AccountId}");
+                return sb.ToString().TrimEnd();
+
+            default:
+                if (string.IsNullOrEmpty(cmd)) return "";
+                return $"Unknown command: '{cmd}'. Type 'help' for available commands.";
         }
     }
 }

@@ -6,6 +6,25 @@ using System.Text.Json.Serialization;
 
 namespace BeeperWinUI.Services;
 
+/// <summary>Simple file logger — writes to %LOCALAPPDATA%\BeeperWinUI\debug.log</summary>
+public static class AppLog
+{
+    private static readonly string _path;
+    static AppLog()
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeeperWinUI");
+        Directory.CreateDirectory(dir);
+        _path = Path.Combine(dir, "debug.log");
+        try { File.WriteAllText(_path, $"=== BeeperWinUI Debug Log — {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n"); } catch { }
+    }
+    public static void Write(string msg)
+    {
+        var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
+        Debug.WriteLine(line);
+        try { File.AppendAllText(_path, line + "\n"); } catch { }
+    }
+}
+
 public class BeeperApiService : IDisposable
 {
     private readonly JsonSerializerOptions _json;
@@ -35,7 +54,7 @@ public class BeeperApiService : IDisposable
         return http;
     }
 
-    private static void Log(string msg) => Debug.WriteLine($"[BeeperApi] {msg}");
+    private static void Log(string msg) => AppLog.Write($"[BeeperApi] {msg}");
 
     public async Task<BeeperInfo?> GetInfoAsync()
     {
@@ -86,7 +105,7 @@ public class BeeperApiService : IDisposable
 
     public async Task<ChatsResponse?> GetChatsAsync(int limit = 50, string? cursor = null,
         string? accountId = null, bool? isPinned = null, bool? isUnread = null,
-        bool? isArchived = null, string? query = null)
+        bool? isArchived = null, string? query = null, string? inbox = null)
     {
         var url = $"/v1/chats?limit={limit}";
         if (cursor != null) url += $"&cursor={Uri.EscapeDataString(cursor)}";
@@ -95,6 +114,7 @@ public class BeeperApiService : IDisposable
         if (isUnread != null) url += $"&isUnread={isUnread.Value.ToString().ToLower()}";
         if (isArchived != null) url += $"&isArchived={isArchived.Value.ToString().ToLower()}";
         if (query != null) url += $"&q={Uri.EscapeDataString(query)}";
+        if (inbox != null) url += $"&inbox={Uri.EscapeDataString(inbox)}";
         return await GetAsync<ChatsResponse>(url);
     }
 
@@ -211,6 +231,41 @@ public class BeeperApiService : IDisposable
         return await PutAsync<EditMessageOutput>(
             $"/v1/chats/{Uri.EscapeDataString(chatId)}/messages/{Uri.EscapeDataString(messageId)}",
             new { text = newText });
+    }
+
+    public async Task<bool> DeleteMessageAsync(string chatId, string messageId)
+    {
+        var path = $"/v1/chats/{Uri.EscapeDataString(chatId)}/messages/{Uri.EscapeDataString(messageId)}";
+        Log($"[Delete] chatId={chatId}, messageId={messageId}");
+        Log($"[Delete] path={path}");
+
+        // Attempt 1: HTTP DELETE (standard REST)
+        LastError = null;
+        var r1 = await DeleteAsync<object>(path);
+        Log($"[Delete] DELETE result={r1 != null}, LastError={LastError}");
+        if (LastError == null) return true;
+
+        // Attempt 2: POST /delete
+        LastError = null;
+        var r2 = await PostAsync<object>(path + "/delete", new { });
+        Log($"[Delete] POST /delete result={r2 != null}, LastError={LastError}");
+        if (LastError == null) return true;
+
+        // Attempt 3: POST /redact (Matrix terminology)
+        LastError = null;
+        var r3 = await PostAsync<object>(path + "/redact", new { });
+        Log($"[Delete] POST /redact result={r3 != null}, LastError={LastError}");
+        if (LastError == null) return true;
+
+        // Attempt 4: POST with body specifying message ID
+        LastError = null;
+        var deletePath = $"/v1/chats/{Uri.EscapeDataString(chatId)}/messages/delete";
+        var r4 = await PostAsync<object>(deletePath, new { messageID = messageId });
+        Log($"[Delete] POST messages/delete result={r4 != null}, LastError={LastError}");
+        if (LastError == null) return true;
+
+        Log($"[Delete] All attempts failed.");
+        return false;
     }
 
     public async Task<AddReactionOutput?> AddReactionAsync(string chatId, string messageId, string reactionKey)
@@ -515,6 +570,10 @@ public class BeeperChat
     [JsonPropertyName("isMuted")] public bool IsMuted { get; set; }
     [JsonPropertyName("isPinned")] public bool IsPinned { get; set; }
     [JsonPropertyName("preview")] public BeeperMessage? Preview { get; set; }
+    [JsonPropertyName("isLowPriority")] public bool IsLowPriority { get; set; }
+    [JsonPropertyName("priority")] public string? Priority { get; set; }
+    [JsonPropertyName("tags")] public List<string>? Tags { get; set; }
+    [JsonPropertyName("spaceID")] public string? SpaceId { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 
@@ -751,5 +810,12 @@ public class ReminderData
 {
     [JsonPropertyName("remindAtMs")] public long RemindAtMs { get; set; }
     [JsonPropertyName("dismissOnIncomingMessage")] public bool DismissOnIncomingMessage { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class AccountsResponse
+{
+    [JsonPropertyName("items")] public List<BeeperAccount>? Items { get; set; }
+    [JsonPropertyName("accounts")] public List<BeeperAccount>? Accounts { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
