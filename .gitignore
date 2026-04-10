@@ -24,3 +24,9 @@ desktop.ini
 
 ## Assets (placeholders generated at build time)
 BeeperWinUI/Assets/*.png
+
+# API Reference
+API_REFERENCE.md
+
+# Test workflow
+.github/workflows/release.yml
