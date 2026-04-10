@@ -1,0 +1,26 @@
+## Build
+bin/
+obj/
+release/
+*.user
+*.suo
+
+## IDE
+.vs/
+.idea/
+*.sln.docstates
+
+## Packages
+*.nupkg
+packages/
+
+## OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+## Certs (local signing)
+.certs/
+
+## Assets (placeholders generated at build time)
+BeeperWinUI/Assets/*.png
