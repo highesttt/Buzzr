@@ -294,3 +294,10 @@ func (s *Store) GetMessagesFromDB(roomID string, limit int) []*Message {
 	}
 	return nil
 }
+
+func (s *Store) GetMessagesBeforeFromDB(roomID string, beforeTimestamp int64, limit int) []*Message {
+	if s.db != nil {
+		return s.db.GetMessagesBefore(roomID, beforeTimestamp, limit)
+	}
+	return nil
+}

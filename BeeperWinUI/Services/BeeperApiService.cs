@@ -703,7 +703,7 @@ public class MessagesResponse
     [JsonPropertyName("hasMore")] public bool HasMore { get; set; }
     [JsonPropertyName("oldestCursor")] public string? OldestCursor { get; set; }
     [JsonPropertyName("newestCursor")] public string? NewestCursor { get; set; }
-    public string? Cursor => OldestCursor ?? Messages?.LastOrDefault()?.SortKey;
+    public string? Cursor => OldestCursor;
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 

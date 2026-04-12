@@ -357,7 +357,7 @@ public sealed partial class MessageView : UserControl
         }
 
         var sorted = response.Messages.OrderBy(m => m.SortKey).ToList();
-        _msgCursor = response.OldestCursor ?? response.Cursor;
+        _msgCursor = response.OldestCursor ?? response.Cursor ?? sorted.FirstOrDefault()?.SortKey;
         _msgHasMore = response.HasMore;
         _allMessages = response.Messages;
 
@@ -397,7 +397,7 @@ public sealed partial class MessageView : UserControl
             if (response?.Messages != null && response.Messages.Count > 0)
             {
                 var olderSorted = response.Messages.OrderBy(m => m.SortKey).ToList();
-                _msgCursor = response.OldestCursor ?? response.Cursor;
+                _msgCursor = response.OldestCursor ?? response.Cursor ?? olderSorted.FirstOrDefault()?.SortKey;
                 _msgHasMore = response.HasMore;
 
                 _allMessages.InsertRange(0, response.Messages);

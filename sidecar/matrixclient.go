@@ -1420,7 +1420,6 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 			token := room.TimelineEnd
 			room.mu.RUnlock()
 
-			// try in-memory timeline first
 			if len(timeline) > 0 {
 				if len(timeline) > limit {
 					timeline = timeline[len(timeline)-limit:]
@@ -1442,7 +1441,21 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 	}
 
 	if limit <= 0 {
-		limit = 20
+		limit = 25
+	}
+
+	if from != "" && direction == 'b' {
+		if ts, err := strconv.ParseInt(from, 10, 64); err == nil && ts > 0 {
+			dbMsgs := mc.store.GetMessagesBeforeFromDB(roomID, ts, limit)
+			if len(dbMsgs) > 0 {
+				var nextCursor string
+				if len(dbMsgs) > 0 {
+					nextCursor = dbMsgs[0].SortKey
+				}
+				return dbMsgs, true, nextCursor, nil
+			}
+			from = ""
+		}
 	}
 
 	dir := mautrix.DirectionBackward

@@ -417,3 +417,46 @@ func (s *SQLiteStore) GetMessages(roomID string, limit int) []*Message {
 	}
 	return msgs
 }
+
+func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, limit int) []*Message {
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, err := s.db.Query(
+		"SELECT id, room_id, account_id, sender_id, sender_name, timestamp, sort_key, type, text, is_sender, event_id, linked_message_id, redacted, attachments_json, reactions_json FROM messages WHERE room_id = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?",
+		roomID, beforeTimestamp, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var msgs []*Message
+	for rows.Next() {
+		var m Message
+		var ts int64
+		var isSender, redacted int
+		var senderName, sortKey, linkedMsgID, eventID, attachJSON, reactJSON sql.NullString
+		err := rows.Scan(&m.ID, &m.ChatID, &m.AccountID, &m.SenderID, &senderName, &ts, &sortKey, &m.Type, &m.Text, &isSender, &eventID, &linkedMsgID, &redacted, &attachJSON, &reactJSON)
+		if err != nil {
+			continue
+		}
+		m.SenderName = senderName.String
+		m.SortKey = sortKey.String
+		m.LinkedMessageID = linkedMsgID.String
+		m.EventID = eventID.String
+		m.Timestamp = time.UnixMilli(ts)
+		m.IsSender = intToBool(isSender)
+		m.Redacted = intToBool(redacted)
+		if attachJSON.String != "" {
+			json.Unmarshal([]byte(attachJSON.String), &m.Attachments)
+		}
+		if reactJSON.String != "" {
+			json.Unmarshal([]byte(reactJSON.String), &m.Reactions)
+		}
+		msgs = append(msgs, &m)
+	}
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs
+}
