@@ -263,7 +263,8 @@ public static class T
         if (diff.TotalDays < 1) return dto.ToLocalTime().ToString("h:mm tt");
         if (diff.TotalDays < 2) return "Yesterday";
         if (diff.TotalDays < 7) return dto.ToLocalTime().ToString("ddd");
-        return dto.ToLocalTime().ToString("MMM d");
+        if (dto.Year == DateTimeOffset.Now.Year) return dto.ToLocalTime().ToString("MMM d");
+        return dto.ToLocalTime().ToString("MMM d, yyyy");
     }
 
     public static string MessageTime(string? isoTimestamp)

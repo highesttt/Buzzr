@@ -190,6 +190,7 @@ public class BeeperApiService : IDisposable
     public async Task<List<BeeperChat>> GetAllChatsAsync(string? accountId = null)
     {
         var all = new List<BeeperChat>();
+        var seen = new HashSet<string>();
         string? cursor = null;
         string? prevCursor = null;
         bool hasMore = true;
@@ -198,7 +199,11 @@ public class BeeperApiService : IDisposable
         {
             var page = await GetChatsAsync(limit: 50, cursor: cursor, accountId: accountId);
             if (page?.Chats == null || page.Chats.Count == 0) break;
-            all.AddRange(page.Chats);
+            foreach (var chat in page.Chats)
+            {
+                if (seen.Add(chat.Id))
+                    all.Add(chat);
+            }
             hasMore = page.HasMore;
             cursor = page.OldestCursor;
             if (string.IsNullOrEmpty(cursor)) break;

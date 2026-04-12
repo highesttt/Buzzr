@@ -239,6 +239,8 @@ func (s *SQLiteStore) LoadAll(store *Store) error {
 		return err
 	}
 
+	s.reconcileTimestamps(store)
+
 	log.Info().
 		Int("rooms", roomCount).
 		Int("members", memberCount).
@@ -246,6 +248,36 @@ func (s *SQLiteStore) LoadAll(store *Store) error {
 		Dur("elapsed", time.Since(start)).
 		Msg("Loaded store from SQLite")
 	return nil
+}
+
+func (s *SQLiteStore) reconcileTimestamps(store *Store) {
+	rows, err := s.db.Query("SELECT room_id, MAX(timestamp) FROM messages GROUP BY room_id")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	fixed := 0
+	for rows.Next() {
+		var roomID string
+		var maxTS int64
+		if rows.Scan(&roomID, &maxTS) != nil {
+			continue
+		}
+		room := store.GetRoom(roomID)
+		if room == nil {
+			continue
+		}
+		msgTime := time.UnixMilli(maxTS)
+		if msgTime.After(room.LastActivity) {
+			room.LastActivity = msgTime
+			store.SetRoom(room)
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Info().Int("fixed", fixed).Msg("Reconciled room timestamps from messages")
+	}
 }
 
 func (s *SQLiteStore) loadRooms(store *Store) (int, error) {

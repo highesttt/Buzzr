@@ -61,6 +61,7 @@ func main() {
 		log.Info().Int("rooms", store.RoomCount()).Msg("SQLite store loaded")
 	}
 	wsHub := NewWSHub()
+	cfg.Settings.Port = *port
 	mc := NewMatrixClient(cfg, store, wsHub)
 	srv := NewServer(*port, mc, store, wsHub, cfg)
 

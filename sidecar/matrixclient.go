@@ -794,8 +794,16 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	room.Preview = msg
-	room.LastActivity = msg.Timestamp
+	// only bump chat for real user messages, not bridge notices/system events
+	isBridgeNoise := msg.Type == "NOTICE" ||
+		strings.Contains(msg.SenderID, "bot:beeper") ||
+		strings.HasSuffix(msg.SenderID, "bot:beeper.local") ||
+		strings.HasSuffix(msg.SenderID, "bot:beeper.com")
+
+	if !isBridgeNoise {
+		room.Preview = msg
+		room.LastActivity = msg.Timestamp
+	}
 
 	room.mu.Lock()
 	room.Timeline = append(room.Timeline, msg)
@@ -809,13 +817,22 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 
 	mc.detectRoomBridge(room)
 
-	mc.wsHub.Broadcast(WSEvent{
-		Type: "message.upserted",
-		Data: msg,
+	if isBridgeNoise {
+		return
+	}
+
+	baseURL := fmt.Sprintf("http://localhost:%d", mc.cfg.Settings.Port)
+	if baseURL == "http://localhost:0" {
+		baseURL = "http://localhost:29110"
+	}
+
+	mc.wsHub.BroadcastRaw(map[string]interface{}{
+		"type":    "message.upserted",
+		"message": MessageToAPIMessage(msg, baseURL),
 	})
-	mc.wsHub.Broadcast(WSEvent{
-		Type: "chat.upserted",
-		Data: room,
+	mc.wsHub.BroadcastRaw(map[string]interface{}{
+		"type": "chat.upserted",
+		"chat": RoomToAPIChat(room, baseURL),
 	})
 
 	log.Debug().
@@ -919,11 +936,6 @@ func (mc *MatrixClient) handleRoomName(ctx context.Context, evt *event.Event) {
 	room := mc.store.EnsureRoom(string(evt.RoomID))
 	room.Title = content.Name
 	mc.store.SetRoom(room)
-
-	mc.wsHub.Broadcast(WSEvent{
-		Type: "chat.upserted",
-		Data: room,
-	})
 }
 
 func (mc *MatrixClient) handleRoomAvatar(ctx context.Context, evt *event.Event) {
@@ -1036,24 +1048,30 @@ func (mc *MatrixClient) onSyncResponse(ctx context.Context, resp *mautrix.RespSy
 			mc.processStateEvent(evt)
 		}
 
-		var latestTimestamp time.Time
+		var latestMsgTimestamp time.Time
+		var latestAnyTimestamp time.Time
 		for _, evt := range roomData.Timeline.Events {
 			evt.RoomID = roomID
 			if evt.StateKey != nil {
 				mc.processStateEvent(evt)
 			}
 			evtTime := time.UnixMilli(evt.Timestamp)
-			if evtTime.After(latestTimestamp) {
-				latestTimestamp = evtTime
+			if evtTime.After(latestAnyTimestamp) {
+				latestAnyTimestamp = evtTime
+			}
+			// only unencrypted messages set LastActivity here;
+			// encrypted events get handled after decryption in handleMessage
+			if evt.Type == event.EventMessage {
+				if evtTime.After(latestMsgTimestamp) {
+					latestMsgTimestamp = evtTime
+				}
 			}
 		}
 
 		room = mc.store.EnsureRoom(string(roomID))
 
-		if room.LastActivity.IsZero() || latestTimestamp.After(room.LastActivity) {
-			if !latestTimestamp.IsZero() {
-				room.LastActivity = latestTimestamp
-			}
+		if !latestMsgTimestamp.IsZero() && latestMsgTimestamp.After(room.LastActivity) {
+			room.LastActivity = latestMsgTimestamp
 		}
 
 		if roomData.Timeline.PrevBatch != "" {
@@ -1427,6 +1445,20 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 
 			dbMsgs := mc.store.GetMessagesFromDB(roomID, limit)
 			if len(dbMsgs) > 0 {
+				latest := dbMsgs[len(dbMsgs)-1]
+				if latest.Timestamp.After(room.LastActivity) {
+					room.LastActivity = latest.Timestamp
+					room.Preview = latest
+					mc.store.SetRoom(room)
+					baseURL := fmt.Sprintf("http://localhost:%d", mc.cfg.Settings.Port)
+					if baseURL == "http://localhost:0" {
+						baseURL = "http://localhost:29110"
+					}
+					mc.wsHub.BroadcastRaw(map[string]interface{}{
+						"type": "chat.upserted",
+						"chat": RoomToAPIChat(room, baseURL),
+					})
+				}
 				return dbMsgs, true, "", nil
 			}
 		}
@@ -1517,6 +1549,22 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 		room.Timeline = messages
 		room.TimelineEnd = resp.End
 		room.mu.Unlock()
+
+		latest := messages[len(messages)-1]
+		if latest.Timestamp.After(room.LastActivity) {
+			room.LastActivity = latest.Timestamp
+			room.Preview = latest
+			mc.store.SetRoom(room)
+
+			baseURL := fmt.Sprintf("http://localhost:%d", mc.cfg.Settings.Port)
+			if baseURL == "http://localhost:0" {
+				baseURL = "http://localhost:29110"
+			}
+			mc.wsHub.BroadcastRaw(map[string]interface{}{
+				"type": "chat.upserted",
+				"chat": RoomToAPIChat(room, baseURL),
+			})
+		}
 	}
 
 	return messages, hasMore, resp.End, nil

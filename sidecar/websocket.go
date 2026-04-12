@@ -31,6 +31,21 @@ func NewWSHub() *WSHub {
 	}
 }
 
+func (h *WSHub) BroadcastRaw(v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.clients {
+		select {
+		case client.send <- data:
+		default:
+		}
+	}
+}
+
 func (h *WSHub) Broadcast(evt WSEvent) {
 	data, err := json.Marshal(evt)
 	if err != nil {
