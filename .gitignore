@@ -22,8 +22,6 @@ desktop.ini
 ## Certs (local signing)
 .certs/
 
-## Assets (placeholders generated at build time)
-BeeperWinUI/Assets/*.png
 
 # API Reference
 API_REFERENCE.md

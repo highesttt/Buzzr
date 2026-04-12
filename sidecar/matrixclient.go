@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,7 +22,6 @@ import (
 	"maunium.net/go/mautrix/crypto"
 	"maunium.net/go/mautrix/crypto/backup"
 	"maunium.net/go/mautrix/crypto/cryptohelper"
-	"maunium.net/go/mautrix/crypto/ssss"
 	"maunium.net/go/mautrix/crypto/verificationhelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -32,7 +30,7 @@ import (
 const (
 	BeeperHomeserver = "https://matrix.beeper.com"
 	BeeperAPIBase    = "https://api.beeper.com"
-	DeviceDisplayName = "BeeperWinUI Sidecar"
+	DeviceDisplayName = "Buzzr Sidecar"
 )
 
 type VerificationState struct {
@@ -586,9 +584,9 @@ func (mc *MatrixClient) requestSecretsAndImportBackup() {
 	userSignSecret, _ := machine.CryptoStore.GetSecret(ctx, "m.cross_signing.user_signing")
 
 	if masterSecret != "" && selfSignSecret != "" && userSignSecret != "" {
-		masterSeed, err1 := decodeBase64Flexible(masterSecret)
-		selfSeed, err2 := decodeBase64Flexible(selfSignSecret)
-		userSeed, err3 := decodeBase64Flexible(userSignSecret)
+		masterSeed, err1 := base64.StdEncoding.DecodeString(masterSecret)
+		selfSeed, err2 := base64.StdEncoding.DecodeString(selfSignSecret)
+		userSeed, err3 := base64.StdEncoding.DecodeString(userSignSecret)
 		if err1 == nil && err2 == nil && err3 == nil {
 			if len(masterSeed) >= 32 && len(selfSeed) >= 32 && len(userSeed) >= 32 {
 				err := machine.ImportCrossSigningKeys(crypto.CrossSigningSeeds{
@@ -1636,8 +1634,9 @@ func (mc *MatrixClient) seedAccountsFromWhoAmI(raw json.RawMessage) {
 
 	var whoami struct {
 		User struct {
-			Bridges  map[string]json.RawMessage `json:"bridges"`
-			UserInfo struct {
+			Bridges    map[string]json.RawMessage `json:"bridges"`
+			Hungryserv json.RawMessage             `json:"hungryserv"`
+			UserInfo   struct {
 				Username string `json:"username"`
 				Email    string `json:"email"`
 				FullName string `json:"fullName"`
@@ -1687,9 +1686,7 @@ func (mc *MatrixClient) seedAccountsFromWhoAmI(raw json.RawMessage) {
 				RemoteName string `json:"remote_name"`
 			} `json:"remoteState"`
 		}
-		if err := json.Unmarshal(bridgeData, &bridge); err != nil {
-			continue
-		}
+		json.Unmarshal(bridgeData, &bridge)
 
 		network := bridgeNetworkNames[bridgeID]
 		if network == "" {
@@ -1724,9 +1721,20 @@ func (mc *MatrixClient) seedAccountsFromWhoAmI(raw json.RawMessage) {
 			},
 		})
 	}
+
+	if len(whoami.User.Hungryserv) > 0 {
+		mc.store.SetAccount(&Account{
+			AccountID: "hungryserv",
+			Network:   "Beeper",
+			User: &AccountUser{
+				ID:       string(mc.userID),
+				FullName: "Beeper",
+				IsSelf:   true,
+			},
+		})
+		log.Info().Msg("Seeded hungryserv/Beeper account from whoami")
+	}
 }
-
-
 
 func (mc *MatrixClient) detectRoomBridge(room *Room) {
 	if room.AccountID != "" {
@@ -1803,262 +1811,3 @@ func countJoinedMembers(members map[string]*Member) int {
 	return count
 }
 
-
-func (mc *MatrixClient) ImportRecoveryKey(ctx context.Context, recoveryKey string) (int, error) {
-	mc.mu.RLock()
-	client := mc.client
-	crypto := mc.crypto
-	mc.mu.RUnlock()
-
-	if client == nil || crypto == nil {
-		return 0, fmt.Errorf("not logged in")
-	}
-
-	machine := crypto.Machine()
-	if machine == nil {
-		return 0, fmt.Errorf("crypto not initialized")
-	}
-
-	ssssMachine := ssss.NewSSSSMachine(client)
-
-	defaultKeyID, err := ssssMachine.GetDefaultKeyID(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("fetching default SSSS key ID: %w", err)
-	}
-	if defaultKeyID == "" {
-		return 0, fmt.Errorf("no default SSSS key configured on server")
-	}
-
-	log.Info().Str("keyID", string(defaultKeyID)).Msg("Found default SSSS key")
-
-	keyData, err := ssssMachine.GetKeyData(ctx, defaultKeyID)
-	if err != nil {
-		return 0, fmt.Errorf("fetching SSSS key metadata: %w", err)
-	}
-
-	key, err := keyData.VerifyRecoveryKey(string(defaultKeyID), recoveryKey)
-	if err != nil {
-		return 0, fmt.Errorf("invalid recovery key: %w", err)
-	}
-
-	log.Info().Msg("Recovery key verified successfully")
-
-	if err := machine.FetchCrossSigningKeysFromSSSS(ctx, key); err != nil {
-		log.Warn().Err(err).Msg("Failed to fetch cross-signing keys (continuing with backup import)")
-	} else {
-		log.Info().Msg("Cross-signing keys imported — device is now trusted")
-	}
-
-	backupKeyData, err := ssssMachine.GetDecryptedAccountData(ctx, event.AccountDataMegolmBackupKey, key)
-	if err != nil {
-		return 0, fmt.Errorf("fetching backup key from SSSS: %w", err)
-	}
-
-	var backupKeyInfo struct {
-		Key []byte `json:"key"`
-	}
-	if err := json.Unmarshal(backupKeyData, &backupKeyInfo); err != nil {
-		return 0, fmt.Errorf("parsing backup key: %w", err)
-	}
-
-	megolmBackupKey, err := backup.MegolmBackupKeyFromBytes(backupKeyInfo.Key)
-	if err != nil {
-		return 0, fmt.Errorf("creating backup key: %w", err)
-	}
-
-	log.Info().Msg("Backup key extracted from SSSS, downloading key backup...")
-
-	version, err := machine.DownloadAndStoreLatestKeyBackup(ctx, megolmBackupKey)
-	if err != nil {
-		return 0, fmt.Errorf("downloading key backup: %w", err)
-	}
-
-	log.Info().Str("version", string(version)).Msg("Key backup imported successfully")
-
-	return 0, nil
-}
-
-
-func decodeBase64Flexible(s string) ([]byte, error) {
-	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	return base64.RawStdEncoding.DecodeString(s)
-}
-
-func extractSeed32(raw []byte) ([]byte, error) {
-	secretStr := string(raw)
-
-	decoded, err := base64.RawStdEncoding.DecodeString(secretStr)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(secretStr)
-	}
-	if err != nil {
-		decoded = raw
-	}
-	if len(decoded) < 32 {
-		return nil, fmt.Errorf("decoded seed too short: %d bytes (need 32)", len(decoded))
-	}
-	return decoded[:32], nil
-}
-
-
-func (mc *MatrixClient) ImportKeysFromBeeperDesktop(ctx context.Context) (int, error) {
-	mc.mu.RLock()
-	client := mc.client
-	cryptoH := mc.crypto
-	mc.mu.RUnlock()
-
-	if client == nil || cryptoH == nil {
-		return 0, fmt.Errorf("not logged in")
-	}
-
-	machine := cryptoH.Machine()
-	if machine == nil {
-		return 0, fmt.Errorf("crypto not initialized")
-	}
-
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		home, _ := os.UserHomeDir()
-		appData = filepath.Join(home, "AppData", "Roaming")
-	}
-
-	dbPaths := []string{
-		filepath.Join(appData, "BeeperTexts", "account.db"),
-		filepath.Join(appData, "Beeper", "account.db"),
-		filepath.Join(appData, "Beeper Nightly", "account.db"),
-	}
-
-	var dbPath string
-	for _, p := range dbPaths {
-		if _, err := os.Stat(p); err == nil {
-			dbPath = p
-			break
-		}
-	}
-	if dbPath == "" {
-		return 0, fmt.Errorf("Beeper Desktop database not found (checked BeeperTexts, Beeper, Beeper Nightly in %%APPDATA%%)")
-	}
-
-	log.Info().Str("path", dbPath).Msg("Found Beeper Desktop database")
-
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
-	if err != nil {
-		return 0, fmt.Errorf("opening Beeper Desktop database: %w", err)
-	}
-	defer db.Close()
-
-	secrets := map[string][]byte{}
-	rows, err := db.QueryContext(ctx, "SELECT name, secret FROM crypto_secrets")
-	if err != nil {
-		return 0, fmt.Errorf("reading crypto_secrets: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var name string
-		var secret []byte
-		if err := rows.Scan(&name, &secret); err != nil {
-			continue
-		}
-		secrets[name] = secret
-		log.Info().Str("name", name).Int("len", len(secret)).Msg("Found crypto secret")
-	}
-
-	if len(secrets) == 0 {
-		return 0, fmt.Errorf("no crypto secrets found in Beeper Desktop database")
-	}
-
-	imported := 0
-
-	masterRaw, hasMaster := secrets["m.cross_signing.master"]
-	selfSignRaw, hasSelfSign := secrets["m.cross_signing.self_signing"]
-	userSignRaw, hasUserSign := secrets["m.cross_signing.user_signing"]
-
-	if hasMaster && hasSelfSign && hasUserSign {
-		masterSeed, err1 := extractSeed32(masterRaw)
-		selfSignSeed, err2 := extractSeed32(selfSignRaw)
-		userSignSeed, err3 := extractSeed32(userSignRaw)
-
-		if err1 == nil && err2 == nil && err3 == nil {
-			log.Info().Msg("Importing cross-signing keys from Beeper Desktop...")
-
-			err := machine.ImportCrossSigningKeys(crypto.CrossSigningSeeds{
-				MasterKey:      masterSeed,
-				SelfSigningKey: selfSignSeed,
-				UserSigningKey: userSignSeed,
-			})
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to import cross-signing keys")
-			} else {
-				log.Info().Msg("Cross-signing keys imported successfully")
-				imported++
-
-				if err := machine.SignOwnMasterKey(ctx); err != nil {
-					log.Warn().Err(err).Msg("Failed to sign own master key (may already be signed)")
-				} else {
-					log.Info().Msg("Signed own master key")
-				}
-
-				deviceID := string(client.DeviceID)
-
-				if deviceID != "" {
-					myDevice, err := machine.CryptoStore.GetDevice(ctx, client.UserID, id.DeviceID(deviceID))
-					if err == nil && myDevice != nil {
-						if err := machine.SignOwnDevice(ctx, myDevice); err != nil {
-							log.Warn().Err(err).Msg("Failed to sign own device")
-						} else {
-							log.Info().Str("deviceID", deviceID).Msg("Signed own device — now trusted by cross-signing")
-							imported++
-						}
-					} else {
-						log.Warn().Str("deviceID", deviceID).Msg("Could not find own device in crypto store")
-					}
-				}
-			}
-		} else {
-			log.Warn().Msg("Failed to extract cross-signing seeds from Beeper Desktop secrets")
-		}
-	} else {
-		log.Warn().Bool("master", hasMaster).Bool("selfSign", hasSelfSign).Bool("userSign", hasUserSign).
-			Msg("Not all cross-signing keys found in Beeper Desktop database")
-	}
-
-	backupKeyRaw, hasBackup := secrets["m.megolm_backup.v1"]
-	if hasBackup {
-		backupSeed, err := extractSeed32(backupKeyRaw)
-		if err != nil {
-			log.Warn().Err(err).Msg("Failed to extract backup key seed")
-		} else {
-			log.Info().Msg("Importing megolm backup key...")
-			megolmBackupKey, err := backup.MegolmBackupKeyFromBytes(backupSeed)
-			if err != nil {
-				log.Warn().Err(err).Msg("Failed to create backup key from seed")
-			} else {
-				version, err := machine.DownloadAndStoreLatestKeyBackup(ctx, megolmBackupKey)
-				if err != nil {
-					log.Warn().Err(err).Msg("Failed to download key backup (keys may be wrong)")
-				} else {
-					log.Info().Str("version", string(version)).Msg("Key backup downloaded")
-					imported++
-				}
-			}
-		}
-	}
-
-	for _, name := range []string{"m.cross_signing.master", "m.cross_signing.self_signing", "m.cross_signing.user_signing", "m.megolm_backup.v1"} {
-		if raw, ok := secrets[name]; ok {
-			seed, err := extractSeed32(raw)
-			if err == nil {
-				machine.CryptoStore.PutSecret(ctx, id.Secret(name), base64.RawStdEncoding.EncodeToString(seed))
-			}
-		}
-	}
-
-	if imported == 0 {
-		return 0, fmt.Errorf("no keys could be imported — cross-signing secrets may be corrupted")
-	}
-
-	return imported, nil
-}

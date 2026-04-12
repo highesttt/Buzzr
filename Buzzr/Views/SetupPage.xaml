@@ -1,0 +1,126 @@
+<Page
+    x:Class="Buzzr.Views.SetupPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark"
+    Background="#1F2021">
+
+    <Grid>
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="440">
+
+            <!-- Logo -->
+            <Image Source="ms-appx:///Assets/buzzr-logo.png" Width="64" Height="64"
+                   HorizontalAlignment="Center" Margin="0,0,0,12"/>
+
+            <TextBlock Text="Buzzr" FontSize="28" FontWeight="SemiBold"
+                       Foreground="#F3F3F3" FontFamily="Segoe UI"
+                       HorizontalAlignment="Center" Margin="0,0,0,4"/>
+            <TextBlock x:Name="SubtitleText" Text="Sign in with your Beeper account" FontSize="14"
+                       Foreground="#A1A1A1" FontFamily="Segoe UI"
+                       HorizontalAlignment="Center" Margin="0,0,0,24"/>
+
+            <!-- Auth card -->
+            <Border Background="#2B2B2B" BorderBrush="#1A1E20"
+                    BorderThickness="1" CornerRadius="8"
+                    Padding="24,20,24,20">
+                <StackPanel Spacing="12">
+
+                    <InfoBar x:Name="ErrorBar" Severity="Error" IsOpen="False"
+                             IsClosable="True" Margin="0,0,0,4"/>
+
+                    <InfoBar x:Name="StatusBar" Severity="Informational" IsOpen="False"
+                             IsClosable="False" Margin="0,0,0,4"/>
+
+                    <!-- Email input (step 1) -->
+                    <StackPanel x:Name="EmailPanel" Spacing="8">
+                        <TextBlock Text="Beeper Email" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#F3F3F3" FontFamily="Segoe UI"/>
+                        <TextBox x:Name="EmailBox"
+                                 PlaceholderText="you@example.com"/>
+                        <Button x:Name="SendCodeBtn" Content="Send verification code"
+                                HorizontalAlignment="Stretch" Height="36"
+                                Style="{StaticResource AccentButtonStyle}"/>
+                    </StackPanel>
+
+                    <!-- Code input (step 2) -->
+                    <StackPanel x:Name="CodePanel" Spacing="8" Visibility="Collapsed">
+                        <TextBlock x:Name="CodePromptText"
+                                   Text="Enter the code sent to your email"
+                                   FontSize="13" Foreground="#A1A1A1" FontFamily="Segoe UI"/>
+                        <TextBox x:Name="CodeBox"
+                                 PlaceholderText="Verification code" MaxLength="10"/>
+                        <Button x:Name="VerifyBtn" Content="Verify &amp; connect"
+                                HorizontalAlignment="Stretch" Height="36"
+                                Style="{StaticResource AccentButtonStyle}"/>
+                        <HyperlinkButton x:Name="BackToEmailBtn" Content="Use a different email"
+                                         HorizontalAlignment="Center" Padding="0"
+                                         FontSize="12"/>
+                    </StackPanel>
+
+                    <!-- Device verification (step 3) -->
+                    <StackPanel x:Name="RecoveryPanel" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Verify your device" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#F3F3F3" FontFamily="Segoe UI"/>
+                        <TextBlock Text="Verify this device with Beeper on your phone or desktop to decrypt your message history."
+                                   FontSize="12" Foreground="#A1A1A1" FontFamily="Segoe UI"
+                                   TextWrapping="Wrap"/>
+                        <Button x:Name="VerifyDeviceBtn" Content="Verify with another device"
+                                HorizontalAlignment="Stretch" Height="36"
+                                Style="{StaticResource AccentButtonStyle}"/>
+                        <HyperlinkButton x:Name="SkipRecoveryBtn" Content="Skip for now"
+                                         HorizontalAlignment="Center" Padding="0"
+                                         FontSize="12"/>
+                    </StackPanel>
+
+                    <!-- SAS emoji verification panel -->
+                    <StackPanel x:Name="VerificationPanel" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Device Verification" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#F3F3F3" FontFamily="Segoe UI"/>
+                        <TextBlock x:Name="VerifyStatusText"
+                                   Text="Waiting for the other device to accept..."
+                                   FontSize="12" Foreground="#A1A1A1" FontFamily="Segoe UI"
+                                   TextWrapping="Wrap"/>
+
+                        <ItemsRepeater x:Name="EmojiRepeater" Visibility="Collapsed">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout MinItemWidth="52" MinItemHeight="60"
+                                                   MinColumnSpacing="4" MinRowSpacing="4"
+                                                   MaximumRowsOrColumns="7"
+                                                   ItemsStretch="Uniform"/>
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel HorizontalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="{Binding Emoji}" FontSize="28"
+                                                   HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Description}" FontSize="9"
+                                                   Foreground="#808080" FontFamily="Segoe UI"
+                                                   HorizontalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+
+                        <Button x:Name="ConfirmEmojiBtn" Content="They match"
+                                HorizontalAlignment="Stretch" Height="36"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Visibility="Collapsed"/>
+                        <Button x:Name="CancelVerifyBtn" Content="Cancel"
+                                HorizontalAlignment="Stretch" Height="36"
+                                Visibility="Collapsed"/>
+                    </StackPanel>
+
+                    <ProgressRing x:Name="ConnectProgress"
+                                  IsActive="False" Width="24" Height="24"
+                                  HorizontalAlignment="Center"
+                                  Visibility="Collapsed"/>
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="FooterText" Text="Connects directly to Beeper servers" FontSize="12"
+                       Foreground="#636363" FontFamily="Segoe UI"
+                       HorizontalAlignment="Center" Margin="0,16,0,0"/>
+        </StackPanel>
+    </Grid>
+</Page>

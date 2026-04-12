@@ -9,12 +9,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
-$Proj = Join-Path $Root "BeeperWinUI\BeeperWinUI.csproj"
+$Proj = Join-Path $Root "Buzzr\Buzzr.csproj"
 $Out = Join-Path $Root "release"
 $CertDir = Join-Path $Root ".certs"
-$CertPath = Join-Path $CertDir "BeeperWinUI.pfx"
-$CertPw = "BeeperWinUI-Dev"
-$CertSubject = "CN=BeeperWinUI"
+$CertPath = Join-Path $CertDir "Buzzr.pfx"
+$CertPw = "Buzzr-Dev"
+$CertSubject = "CN=dev.highest.buzzr"
 
 function Step($msg) { Write-Host "`n>> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "   $msg" -ForegroundColor Green }
@@ -24,7 +24,6 @@ Step "Preparing release directory"
 if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 
-# certificate for signing (required for msix, optional for portable)
 if (-not $SkipSign) {
     Step "Code signing certificate"
     if (-not (Test-Path $CertDir)) { New-Item -ItemType Directory -Path $CertDir -Force | Out-Null }
@@ -35,7 +34,7 @@ if (-not $SkipSign) {
         Warn "Creating self-signed cert..."
         $cert = New-SelfSignedCertificate `
             -Type Custom -Subject $CertSubject -KeyUsage DigitalSignature `
-            -FriendlyName "BeeperWinUI Development" `
+            -FriendlyName "Buzzr Development" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
 
@@ -43,7 +42,6 @@ if (-not $SkipSign) {
         Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($cert.Thumbprint)" -FilePath $CertPath -Password $pw | Out-Null
         Ok "Created: $CertPath"
 
-        # trust locally so msix installs without prompts
         try {
             $pfx = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPath, $CertPw)
             $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
@@ -59,32 +57,30 @@ if (-not $SkipSign) {
     }
 }
 
-# build Go sidecar
 Step "Building Go sidecar"
 $sidecarDir = Join-Path $Root "sidecar"
-$sidecarExe = Join-Path $sidecarDir "beeper-sidecar.exe"
+$sidecarExe = Join-Path $sidecarDir "buzzr-sidecar.exe"
 $savedCC = $env:CC
 $savedCGO = $env:CGO_ENABLED
 try {
     $env:CC = "E:\Programs\msys64\ucrt64\bin\gcc.exe"
     $env:CGO_ENABLED = "1"
     Push-Location $sidecarDir
-    & go build -tags goolm -ldflags "-s -w" -o beeper-sidecar.exe .
+    & go build -tags goolm -ldflags "-s -w" -o buzzr-sidecar.exe .
     Pop-Location
     if ($LASTEXITCODE -ne 0) {
         Warn "Sidecar build failed (continuing without it)"
     } elseif (Test-Path $sidecarExe) {
         $sidecarSize = (Get-Item $sidecarExe).Length / 1MB
-        Ok "Built beeper-sidecar.exe ($([math]::Round($sidecarSize, 1)) MB)"
+        Ok "Built buzzr-sidecar.exe ($([math]::Round($sidecarSize, 1)) MB)"
     }
 } finally {
     $env:CC = $savedCC
     $env:CGO_ENABLED = $savedCGO
 }
 
-# placeholder assets
 Step "Visual assets"
-$assetsDir = Join-Path $Root "BeeperWinUI\Assets"
+$assetsDir = Join-Path $Root "Buzzr\Assets"
 if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null }
 
 $png = [Convert]::FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWNgYPj/HwADBwF/OMBo3AAAAABJRU5ErkJggg==")
@@ -94,7 +90,6 @@ $png = [Convert]::FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ
     if (-not (Test-Path $p)) { [IO.File]::WriteAllBytes($p, $png); Ok "Created: $_" }
 }
 
-# msix
 Step "Building MSIX ($Platform $Configuration)"
 $msixPub = Join-Path $Out "msix-publish"
 & dotnet publish $Proj --configuration $Configuration --runtime "win-$Platform" --self-contained true --output $msixPub `
@@ -107,7 +102,6 @@ $msixFile = Get-ChildItem -Path $Out -Filter "*.msix" -Recurse -ErrorAction Sile
 if ($msixFile) { Ok "Built: $($msixFile.FullName)" }
 else { Warn "MSIX not found in output" }
 
-# sign
 if ($msixFile -and -not $SkipSign) {
     Step "Signing MSIX"
     $signtool = $null
@@ -128,12 +122,11 @@ if ($msixFile -and -not $SkipSign) {
         Warn "signtool.exe not found, install Windows SDK"
     }
 
-    $final = Join-Path $Out "Beeper-$Version-$Platform.msix"
+    $final = Join-Path $Out "Buzzr-$Version-$Platform.msix"
     Copy-Item $msixFile.FullName $final -Force
     Ok "Output: $final"
 }
 
-# build portable zip
 Step "Building portable zip ($Platform $Configuration)"
 $portDir = Join-Path $Out "portable"
 & dotnet publish $Proj --configuration $Configuration --runtime "win-$Platform" --self-contained true --output $portDir `
@@ -141,7 +134,7 @@ $portDir = Join-Path $Out "portable"
 
 if ($LASTEXITCODE -ne 0) { Write-Host "Portable build failed" -ForegroundColor Red; exit 1 }
 
-$zip = Join-Path $Out "Beeper-$Version-$Platform-portable.zip"
+$zip = Join-Path $Out "Buzzr-$Version-$Platform-portable.zip"
 Compress-Archive -Path "$portDir\*" -DestinationPath $zip -Force
 Ok "Output: $zip"
 

@@ -15,7 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const Version = "1.0.0"
+const Version = "0.0.1"
 
 type Server struct {
 	port   int
@@ -47,11 +47,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /v1/auth/verify", s.handleAuthVerify)
 	mux.HandleFunc("POST /v1/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("GET /v1/auth/status", s.handleAuthStatus)
-	mux.HandleFunc("POST /v1/auth/recovery", s.withAuth(s.handleRecoveryKey))
 	mux.HandleFunc("POST /v1/auth/verify-device", s.withAuth(s.handleStartVerification))
 	mux.HandleFunc("GET /v1/auth/verify-device/status", s.withAuth(s.handleVerificationStatus))
 	mux.HandleFunc("POST /v1/auth/verify-device/confirm", s.withAuth(s.handleConfirmVerification))
-	mux.HandleFunc("POST /v1/auth/import-beeper-keys", s.withAuth(s.handleImportBeeperKeys))
 	mux.HandleFunc("GET /v1/info", s.handleInfo)
 	mux.HandleFunc("GET /v1/accounts", s.withAuth(s.handleGetAccounts))
 	mux.HandleFunc("GET /v1/chats", s.withAuth(s.handleGetChats))
@@ -178,9 +176,9 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 	info := APIInfo{
 		App: APIAppInfo{
-			Name:     "BeeperSidecar",
+			Name:     "Buzzr",
 			Version:  Version,
-			BundleID: "com.beeper.sidecar",
+			BundleID: "dev.highest.buzzr.sidecar",
 		},
 		Platform: APIPlatformInfo{
 			OS:   osName,
@@ -262,29 +260,6 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleRecoveryKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		RecoveryKey string `json:"recoveryKey"`
-	}
-	if err := readJSON(r, &req); err != nil || req.RecoveryKey == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "recoveryKey is required")
-		return
-	}
-
-	imported, err := s.mc.ImportRecoveryKey(r.Context(), req.RecoveryKey)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "RECOVERY_FAILED", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success":      true,
-		"keysImported": imported,
-		"message":      "Key backup imported. Historical messages should now be decryptable.",
-	})
-}
-
-
 func (s *Server) handleStartVerification(w http.ResponseWriter, r *http.Request) {
 	txnID, err := s.mc.StartDeviceVerification(r.Context())
 	if err != nil {
@@ -309,19 +284,6 @@ func (s *Server) handleConfirmVerification(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status": "confirmed",
-	})
-}
-
-func (s *Server) handleImportBeeperKeys(w http.ResponseWriter, r *http.Request) {
-	imported, err := s.mc.ImportKeysFromBeeperDesktop(context.Background())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "IMPORT_FAILED", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success":      true,
-		"keysImported": imported,
-		"message":      "Keys imported from Beeper Desktop. Historical messages should now be decryptable.",
 	})
 }
 

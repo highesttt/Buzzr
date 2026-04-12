@@ -1,0 +1,22 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bubble" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7B5CE5"/>
+      <stop offset="1" stop-color="#4C8BF5"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="120" y1="60" x2="140" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E0E8FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- original viewBox was roughly 52,45 to 204,211 = 152w x 166h, center at 128,128 -->
+  <g transform="translate(128,128) scale(1.45) translate(-128,-128)">
+    <path d="M52 72C52 57.088 64.088 45 79 45H177C191.912 45 204 57.088 204 72V148C204 162.912 191.912 175 177 175H140L108 211V175H79C64.088 175 52 162.912 52 148V72Z" fill="url(#bubble)"/>
+    <path d="M60 76C60 63.297 70.297 53 83 53H173C185.703 53 196 63.297 196 76V144C196 156.703 185.703 167 173 167H136L108 197V167H83C70.297 167 60 156.703 60 144V76Z" fill="white" fill-opacity="0.12"/>
+    <path d="M144 68L108 128H132L112 188L168 118H140L160 68H144Z" fill="url(#bolt)" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="178" cy="82" r="6" fill="white" fill-opacity="0.6"/>
+    <circle cx="192" cy="96" r="4" fill="white" fill-opacity="0.4"/>
+    <circle cx="198" cy="114" r="3" fill="white" fill-opacity="0.25"/>
+  </g>
+</svg>

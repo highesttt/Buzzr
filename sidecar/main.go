@@ -16,10 +16,10 @@ import (
 
 func defaultDataDir() string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "BeeperSidecar")
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Buzzr")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "beeper-sidecar")
+	return filepath.Join(home, ".config", "buzzr")
 }
 
 func main() {
@@ -40,7 +40,7 @@ func main() {
 	log.Info().
 		Int("port", *port).
 		Str("dataDir", *dataDir).
-		Msg("Starting Beeper sidecar")
+		Msg("Starting Buzzr sidecar")
 
 	if err := os.MkdirAll(*dataDir, 0700); err != nil {
 		log.Fatal().Err(err).Msg("Failed to create data directory")
@@ -82,7 +82,7 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("\n  Beeper Sidecar running on http://localhost:%d\n\n", *port)
+	fmt.Printf("\n  Buzzr sidecar running on http://localhost:%d\n\n", *port)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)

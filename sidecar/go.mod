@@ -1,4 +1,4 @@
-module beeper-sidecar
+module buzzr-sidecar
 
 go 1.25.0
 

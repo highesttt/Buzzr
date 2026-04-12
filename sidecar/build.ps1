@@ -1,4 +1,4 @@
-# Build script for Beeper Sidecar
+# Build script for Buzzr Sidecar
 # Requires: Go 1.22+, GCC (MinGW-w64 ucrt64)
 
 param(
@@ -9,22 +9,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Use MinGW UCRT64 GCC for CGO (SQLite)
 $env:CC = "E:\Programs\msys64\ucrt64\bin\gcc.exe"
 $env:CGO_ENABLED = "1"
 
-Write-Host "Building Beeper Sidecar..." -ForegroundColor Cyan
+Write-Host "Building Buzzr Sidecar..." -ForegroundColor Cyan
 
-# Build with goolm tag (pure Go Olm, no libolm C dependency)
-go build -tags goolm -o beeper-sidecar.exe .
+go build -tags goolm -o buzzr-sidecar.exe .
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Build failed!" -ForegroundColor Red
     exit 1
 }
 
-$size = (Get-Item beeper-sidecar.exe).Length / 1MB
-Write-Host "Built beeper-sidecar.exe ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
+$size = (Get-Item buzzr-sidecar.exe).Length / 1MB
+Write-Host "Built buzzr-sidecar.exe ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
 
 if ($Run) {
     $args = @("-port", $Port)
@@ -32,5 +30,5 @@ if ($Run) {
         $args += "-debug"
     }
     Write-Host "Starting sidecar on port $Port..." -ForegroundColor Yellow
-    & .\beeper-sidecar.exe @args
+    & .\buzzr-sidecar.exe @args
 }
