@@ -33,7 +33,12 @@ public sealed partial class SetupPage : Page
 
         var savedToken = App.Settings.AccessToken;
         if (!string.IsNullOrEmpty(savedToken))
+        {
+            EmailBox.IsEnabled = false;
+            SendCodeBtn.IsEnabled = false;
+            ShowProgress("Connecting...");
             _ = AutoConnectAsync(savedToken);
+        }
     }
 
     private async Task SendCodeAsync()
@@ -48,6 +53,7 @@ public sealed partial class SetupPage : Page
 
         ErrorBar.IsOpen = false;
         SendCodeBtn.IsEnabled = false;
+        EmailBox.IsEnabled = false;
         ShowProgress("Starting and sending code...");
 
         if (!App.IsSidecarRunning)
@@ -55,10 +61,11 @@ public sealed partial class SetupPage : Page
             var started = App.StartSidecar(App.Settings.SidecarPort);
             if (!started)
             {
-                ErrorBar.Message = "Could not start sidecar. Make sure beeper-sidecar.exe is built.";
+                ErrorBar.Message = "Could not start sidecar. Make sure buzzr-sidecar.exe is built.";
                 ErrorBar.IsOpen = true;
                 HideProgress();
                 SendCodeBtn.IsEnabled = true;
+                EmailBox.IsEnabled = true;
                 return;
             }
             await Task.Delay(1500);
@@ -89,6 +96,7 @@ public sealed partial class SetupPage : Page
             ErrorBar.IsOpen = true;
             HideProgress();
             SendCodeBtn.IsEnabled = true;
+            EmailBox.IsEnabled = true;
             return;
         }
 
@@ -104,6 +112,7 @@ public sealed partial class SetupPage : Page
         EmailPanel.Visibility = Visibility.Visible;
         CodePanel.Visibility = Visibility.Collapsed;
         SendCodeBtn.IsEnabled = true;
+        EmailBox.IsEnabled = true;
         StatusBar.IsOpen = false;
         ErrorBar.IsOpen = false;
     }
@@ -132,6 +141,7 @@ public sealed partial class SetupPage : Page
 
         ErrorBar.IsOpen = false;
         VerifyBtn.IsEnabled = false;
+        CodeBox.IsEnabled = false;
         ShowProgress("Verifying...");
 
         var result = await App.Api.AuthVerifyAsync(email, code);
@@ -143,6 +153,7 @@ public sealed partial class SetupPage : Page
             ErrorBar.IsOpen = true;
             HideProgress();
             VerifyBtn.IsEnabled = true;
+            CodeBox.IsEnabled = true;
             return;
         }
 
@@ -153,6 +164,10 @@ public sealed partial class SetupPage : Page
             localToken,
             result.UserID ?? "sidecar",
             null);
+
+        CodeBox.IsEnabled = false;
+        VerifyBtn.IsEnabled = false;
+        BackToEmailBtn.IsEnabled = false;
 
         await WaitForSyncAsync();
         HideProgress();
