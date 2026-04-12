@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using Windows.ApplicationModel.DataTransfer;
 using Buzzr.Services;
 using static Buzzr.Theme.T;
 
@@ -88,6 +89,9 @@ public sealed partial class ShellPage : Page
         "twitter", "twittergo", "googlechat", "line", "sh-line", "imessage", "imessagego"
     ];
 
+    private string? _draggedAccountId;
+    private DateTime _lastNetSwap;
+
     private void RenderAccountIcons()
     {
         AccountIconsStack.Children.Clear();
@@ -106,7 +110,7 @@ public sealed partial class ShellPage : Page
         foreach (var account in _accounts)
         {
             var networkName = NetName(account.AccountId, account.Network);
-            var iconContainer = new Grid { Width = 36, Height = 36 };
+            var iconContainer = new Grid { Width = 36, Height = 40, Padding = new Thickness(0, 2, 0, 2) };
 
             var iconBorder = NetIcon(account.AccountId, 32, account.Network);
             iconContainer.Children.Add(iconBorder);
@@ -134,6 +138,48 @@ public sealed partial class ShellPage : Page
             ToolTipService.SetToolTip(iconContainer, tooltipText);
 
             var capturedId = account.AccountId;
+
+            iconContainer.CanDrag = true;
+            iconContainer.AllowDrop = true;
+
+            iconContainer.DragStarting += (s, e) =>
+            {
+                _draggedAccountId = capturedId;
+                e.Data.RequestedOperation = DataPackageOperation.Move;
+                ((Grid)s).Opacity = 0.4;
+            };
+
+            iconContainer.DropCompleted += (s, e) =>
+            {
+                ((Grid)s).Opacity = 1;
+                _draggedAccountId = null;
+            };
+
+            iconContainer.DragOver += (s, e) =>
+            {
+                e.AcceptedOperation = DataPackageOperation.Move;
+                if (_draggedAccountId == null || _draggedAccountId == capturedId) return;
+                if ((DateTime.UtcNow - _lastNetSwap).TotalMilliseconds < 350) return;
+                var fromIdx = _accounts.FindIndex(a => a.AccountId == _draggedAccountId);
+                var toIdx = _accounts.FindIndex(a => a.AccountId == capturedId);
+                if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx)
+                {
+                    _lastNetSwap = DateTime.UtcNow;
+                    var moved = _accounts[fromIdx];
+                    _accounts.RemoveAt(fromIdx);
+                    _accounts.Insert(toIdx, moved);
+                    var child = AccountIconsStack.Children[fromIdx];
+                    AccountIconsStack.Children.RemoveAt(fromIdx);
+                    DispatcherQueue.TryEnqueue(() => AccountIconsStack.Children.Insert(toIdx, child));
+                }
+            };
+
+            iconContainer.Drop += (s, e) =>
+            {
+                App.Settings.SetString("network_order", string.Join(",", _accounts.Select(a => a.AccountId)));
+                _draggedAccountId = null;
+            };
+
             iconContainer.PointerPressed += (s, _) =>
             {
                 if (_selectedAccountId == capturedId)

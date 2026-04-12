@@ -11,6 +11,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
@@ -49,6 +50,7 @@ public sealed partial class ChatListControl : UserControl
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Buzzr", "avatar_cache");
     private string[] _censorLines = [];
+    private string? _draggedPinId;
     public bool IsCensored => _censorMode;
 
     public ChatListControl()
@@ -444,6 +446,17 @@ public sealed partial class ChatListControl : UserControl
 
             if (pinnedChats.Count > 0)
             {
+                var savedPinOrder = App.Settings.GetString("pin_order");
+                if (!string.IsNullOrEmpty(savedPinOrder))
+                {
+                    var orderIds = savedPinOrder.Split(',').ToList();
+                    pinnedChats = pinnedChats.OrderBy(c =>
+                    {
+                        var idx = orderIds.IndexOf(c.Id);
+                        return idx >= 0 ? idx : 999;
+                    }).ToList();
+                }
+
                 ListStack.Children.Add(MakePinnedGrid(pinnedChats));
                 if (unpinnedStart < batch.Count)
                     ListStack.Children.Add(Divider());
@@ -463,6 +476,7 @@ public sealed partial class ChatListControl : UserControl
     {
         const int columns = 3;
         var grid = new Grid { Margin = new Thickness(4, 0, 4, 0) };
+        grid.ChildrenTransitions = [new Microsoft.UI.Xaml.Media.Animation.RepositionThemeTransition()];
         for (int c = 0; c < columns; c++)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         int rows = (pinned.Count + columns - 1) / columns;
@@ -532,7 +546,76 @@ public sealed partial class ChatListControl : UserControl
             Child = stack,
             CornerRadius = new CornerRadius(8),
             Background = B(isSelected ? Selected : Colors.Transparent),
-            Tag = chat.Id
+            Tag = chat.Id,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+
+        border.CanDrag = true;
+        border.AllowDrop = true;
+
+        border.DragStarting += (s, e) =>
+        {
+            _draggedPinId = chat.Id;
+            e.Data.RequestedOperation = DataPackageOperation.Move;
+            ((Border)s).Opacity = 0.4;
+            ((Border)s).Background = B(Colors.Transparent);
+        };
+
+        border.DropCompleted += (s, e) =>
+        {
+            ((Border)s).Opacity = 1;
+            _draggedPinId = null;
+        };
+
+        border.DragOver += (s, e) => { e.AcceptedOperation = DataPackageOperation.Move; };
+
+        border.DragEnter += (s, e) =>
+        {
+            if (_draggedPinId == null || _draggedPinId == chat.Id) return;
+            {
+                var parentGrid = ((Border)s).Parent as Grid;
+                if (parentGrid == null) return;
+
+                var fromIdx = -1;
+                var toIdx = -1;
+                for (int idx = 0; idx < parentGrid.Children.Count; idx++)
+                {
+                    if (parentGrid.Children[idx] is Border b && b.Tag is string tid)
+                    {
+                        if (tid == _draggedPinId) fromIdx = idx;
+                        if (tid == chat.Id) toIdx = idx;
+                    }
+                }
+
+                if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx)
+                {
+                    var child = parentGrid.Children[fromIdx];
+                    parentGrid.Children.RemoveAt(fromIdx);
+                    parentGrid.Children.Insert(toIdx, child);
+
+                    // update grid positions
+                    const int cols = 3;
+                    for (int idx = 0; idx < parentGrid.Children.Count; idx++)
+                    {
+                        Grid.SetColumn((FrameworkElement)parentGrid.Children[idx], idx % cols);
+                        Grid.SetRow((FrameworkElement)parentGrid.Children[idx], idx / cols);
+                    }
+
+                    // save order from current visual order
+                    var ids = parentGrid.Children
+                        .OfType<Border>()
+                        .Select(b => b.Tag as string)
+                        .Where(id => id != null)
+                        .ToList();
+                    App.Settings.SetString("pin_order", string.Join(",", ids));
+                }
+            }
+        };
+
+        border.Drop += (s, e) =>
+        {
+            _draggedPinId = null;
         };
 
         border.PointerEntered += (s, _) =>

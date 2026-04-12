@@ -40,7 +40,13 @@
                               VerticalScrollBarVisibility="Hidden"
                               HorizontalAlignment="Center"
                               Padding="0,12,0,4">
-                    <StackPanel x:Name="AccountIconsStack" Spacing="4"/>
+                    <StackPanel x:Name="AccountIconsStack" Spacing="4">
+                        <StackPanel.ChildrenTransitions>
+                            <TransitionCollection>
+                                <RepositionThemeTransition/>
+                            </TransitionCollection>
+                        </StackPanel.ChildrenTransitions>
+                    </StackPanel>
                 </ScrollViewer>
 
                 <!-- Settings gear -->
