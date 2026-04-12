@@ -505,60 +505,8 @@ public sealed partial class MessageView : UserControl
         HeaderAvatarContainer.Child = null;
         HeaderAvatarContainer.Visibility = Visibility.Collapsed;
 
-        string? imgUrl = null;
-
-        if (chat.Participants?.Items != null)
-        {
-            var contact = chat.Participants.Items.FirstOrDefault(p =>
-                !p.IsSelf &&
-                !p.Id.Contains("bot:") &&
-                p.Id != App.Settings.UserId &&
-                !string.IsNullOrEmpty(p.ImgUrl));
-            imgUrl = contact?.ImgUrl;
-        }
-
-        if (string.IsNullOrEmpty(imgUrl) && !string.IsNullOrEmpty(chat.AvatarUrl))
-            imgUrl = chat.AvatarUrl;
-
-        Border avatarBorder;
-        if (!string.IsNullOrEmpty(imgUrl))
-        {
-            try
-            {
-                var bmp = ChatListControl.GetCachedBitmapPublic(imgUrl, 36);
-                if (bmp != null)
-                {
-                    var img = new Image
-                    {
-                        Source = bmp,
-                        Width = 36,
-                        Height = 36,
-                        Stretch = Stretch.UniformToFill
-                    };
-                    avatarBorder = new Border
-                    {
-                        Width = 36,
-                        Height = 36,
-                        CornerRadius = new CornerRadius(18),
-                        Child = img
-                    };
-                }
-                else
-                {
-                    avatarBorder = Avatar(chat.Title ?? "?", 36, NetColor(chat.AccountId));
-                }
-            }
-            catch
-            {
-                avatarBorder = Avatar(chat.Title ?? "?", 36, NetColor(chat.AccountId));
-            }
-        }
-        else
-        {
-            avatarBorder = Avatar(chat.Title ?? "?", 36, NetColor(chat.AccountId));
-        }
-
-        HeaderAvatarContainer.Child = avatarBorder;
+        var avatarElement = ChatListControl.MakeAvatarPublic(chat, 36);
+        HeaderAvatarContainer.Child = avatarElement;
         HeaderAvatarContainer.Visibility = Visibility.Visible;
     }
 

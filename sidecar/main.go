@@ -55,6 +55,11 @@ func main() {
 	}
 
 	store := NewStore()
+	if err := store.InitDB(*dataDir); err != nil {
+		log.Warn().Err(err).Msg("Failed to init SQLite store, running without persistence")
+	} else {
+		log.Info().Int("rooms", store.RoomCount()).Msg("SQLite store loaded")
+	}
 	wsHub := NewWSHub()
 	mc := NewMatrixClient(cfg, store, wsHub)
 	srv := NewServer(*port, mc, store, wsHub, cfg)
@@ -87,5 +92,6 @@ func main() {
 	cancel()
 	mc.Stop()
 	srv.Stop()
+	store.CloseDB()
 	log.Info().Msg("Goodbye!")
 }

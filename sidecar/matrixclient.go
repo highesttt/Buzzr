@@ -391,11 +391,11 @@ func (mc *MatrixClient) StartSync(ctx context.Context) {
 	mc.mu.Unlock()
 
 	if mc.store.RoomCount() == 0 && mc.client.Store != nil {
-		log.Info().Msg("In-memory store is empty — clearing sync token to force full initial sync")
+		log.Info().Msg("No persisted rooms — forcing full initial sync")
 		mc.client.Store.SaveNextBatch(ctx, mc.userID, "")
 	}
 
-	log.Info().Msg("Starting Matrix sync loop...")
+	log.Info().Int("rooms", mc.store.RoomCount()).Msg("Starting Matrix sync loop...")
 
 	go mc.waitForTagsAndNotify(syncCtx)
 
@@ -807,6 +807,7 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 	room.mu.Unlock()
 
 	mc.store.SetRoom(room)
+	mc.store.SaveMessage(msg)
 
 	mc.detectRoomBridge(room)
 
@@ -882,6 +883,7 @@ func (mc *MatrixClient) handleMember(ctx context.Context, evt *event.Event) {
 		Membership:  string(content.Membership),
 	}
 	room.SetMember(targetUser, member)
+	mc.store.SaveMember(roomID, member)
 	room.mu.RLock()
 	room.MemberCount = countJoinedMembers(room.Members)
 	joined := countJoinedMembers(room.Members)
@@ -1107,12 +1109,14 @@ func (mc *MatrixClient) processStateEvent(evt *event.Event) {
 		}
 	case event.StateMember:
 		if c := evt.Content.AsMember(); c != nil && evt.StateKey != nil {
-			room.SetMember(*evt.StateKey, &Member{
+			m := &Member{
 				UserID:      *evt.StateKey,
 				DisplayName: c.Displayname,
 				AvatarURL:   string(c.AvatarURL),
 				Membership:  string(c.Membership),
-			})
+			}
+			room.SetMember(*evt.StateKey, m)
+			mc.store.SaveMember(string(evt.RoomID), m)
 		}
 	case event.StateRoomAvatar:
 		if c := evt.Content.AsRoomAvatar(); c != nil {

@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
@@ -60,33 +59,8 @@ public sealed partial class ShellPage : Page
         OpenTerminal = null;
     }
 
-    private static readonly string _accountCachePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BeeperWinUI", "accounts_cache.json");
-
     private async Task LoadAccountsAsync()
     {
-        try
-        {
-            if (File.Exists(_accountCachePath))
-            {
-                var json = await Task.Run(() => File.ReadAllText(_accountCachePath));
-                var cached = JsonSerializer.Deserialize<List<BeeperAccount>>(json,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (cached != null && cached.Count > 0)
-                {
-                    cached.RemoveAll(a => a.AccountId is "slackgo" or "imessagego" or "signalgo"
-                        && a.User?.FullName == a.Network);
-                    _accounts = cached;
-                    AppLog.Write($"[Accounts] Loaded {cached.Count} accounts from cache");
-                    ChatList.SetAccounts(_accounts);
-                    RenderAccountIcons();
-                    UpdateSettingsFlyout();
-                }
-            }
-        }
-        catch { }
-
         for (int attempt = 0; attempt < 20; attempt++)
         {
             await Task.Delay(2000);
@@ -100,15 +74,6 @@ public sealed partial class ShellPage : Page
                     ChatList.SetAccounts(_accounts);
                     RenderAccountIcons();
                     UpdateSettingsFlyout();
-                    _ = Task.Run(() =>
-                    {
-                        try
-                        {
-                            var j = JsonSerializer.Serialize(accounts);
-                            File.WriteAllText(_accountCachePath, j);
-                        }
-                        catch { }
-                    });
                     return;
                 }
             }

@@ -331,60 +331,8 @@ public sealed partial class ChatListControl : UserControl
         return chatIdx;
     }
 
-    private static readonly string _chatCachePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BeeperWinUI", "chat_cache.json");
-
-    private static readonly JsonSerializerOptions s_cacheJson = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private void SaveChatCache(List<BeeperChat> chats)
-    {
-        try
-        {
-            var json = JsonSerializer.Serialize(chats, s_cacheJson);
-            File.WriteAllText(_chatCachePath, json);
-            AppLog.Write($"[Cache] Saved {chats.Count} chats to disk");
-        }
-        catch { }
-    }
-
-    private List<BeeperChat>? LoadChatCache()
-    {
-        try
-        {
-            if (!File.Exists(_chatCachePath)) return null;
-            var json = File.ReadAllText(_chatCachePath);
-            var chats = JsonSerializer.Deserialize<List<BeeperChat>>(json, s_cacheJson);
-            if (chats != null && chats.Count > 0)
-            {
-                AppLog.Write($"[Cache] Loaded {chats.Count} chats from disk cache");
-                return chats;
-            }
-        }
-        catch { }
-        return null;
-    }
-
     private async Task LoadAllChatsAsync()
     {
-        var cached = await Task.Run(() => LoadChatCache());
-        if (cached != null && cached.Count > 0)
-        {
-            _allChats = cached;
-            LoadingPanel.Visibility = Visibility.Collapsed;
-            LoadingRing.IsActive = false;
-            ApplyFilters();
-            StartRealTimeUpdates();
-            ChatsLoaded?.Invoke();
-
-            _ = CoordinatedBackgroundSyncAsync();
-            return;
-        }
-
         LoadingPanel.Visibility = Visibility.Visible;
         LoadingRing.IsActive = true;
         LoadingText.Text = "Fetching chats...";
@@ -393,6 +341,7 @@ public sealed partial class ChatListControl : UserControl
         {
             var allChats = await App.Api.GetAllChatsAsync();
             _allChats = allChats;
+            _sidecarReady = true;
             await FetchLowPriorityIdsAsync();
         }
         catch (Exception ex)
@@ -421,36 +370,6 @@ public sealed partial class ChatListControl : UserControl
         ApplyFilters();
         StartRealTimeUpdates();
         ChatsLoaded?.Invoke();
-
-        _ = Task.Run(() => SaveChatCache(_allChats));
-
-        _ = CoordinatedBackgroundSyncAsync();
-    }
-
-    private async Task CoordinatedBackgroundSyncAsync()
-    {
-        var cachedPinIds = new HashSet<string>(_allChats.Where(c => c.IsPinned).Select(c => c.Id));
-        AppLog.Write($"[Sync] Starting coordinated sync ({cachedPinIds.Count} cached pins)");
-
-        for (int i = 0; i < 30; i++)
-        {
-            await Task.Delay(1000);
-            try
-            {
-                var info = await App.Api.GetInfoAsync();
-                if (info != null)
-                {
-                    _sidecarReady = true;
-                    _avatarCache.Clear();
-                    AppLog.Write("[Sync] Sidecar ready");
-                    break;
-                }
-            }
-            catch { }
-        }
-
-        DispatcherQueue.TryEnqueue(() => ApplyFilters());
-        AppLog.Write("[Sync] Sidecar ready — re-rendered with avatar loading enabled. Pins will update via WebSocket.");
     }
 
     private async Task RefreshFirstPageAsync()
@@ -852,6 +771,8 @@ public sealed partial class ChatListControl : UserControl
         return flyout;
     }
 
+    public static FrameworkElement MakeAvatarPublic(BeeperChat chat, double size = 40) => new ChatListControl().TryMakeAvatarElement(chat, size);
+
     private FrameworkElement TryMakeAvatarElement(BeeperChat chat, double size = 40)
     {
         if (chat.Title is "Note to self" or "note to self")
@@ -1008,7 +929,6 @@ public sealed partial class ChatListControl : UserControl
         _tagRefreshPending = false;
 
         await RefreshFirstPageAsync();
-        _ = Task.Run(() => SaveChatCache(_allChats));
     }
 
     public static BitmapImage? GetCachedBitmapPublic(string url, int size) => GetCachedBitmap(url, size);
@@ -1086,15 +1006,7 @@ public sealed partial class ChatListControl : UserControl
         catch { return (0, 0); }
     }
 
-    public static long GetChatCacheSize()
-    {
-        try
-        {
-            if (!File.Exists(_chatCachePath)) return 0;
-            return new FileInfo(_chatCachePath).Length;
-        }
-        catch { return 0; }
-    }
+    public static long GetChatCacheSize() => 0;
 
     public static void ClearAllCaches()
     {
@@ -1103,8 +1015,6 @@ public sealed partial class ChatListControl : UserControl
             _avatarCache.Clear();
             if (Directory.Exists(_avatarCacheDir))
                 Directory.Delete(_avatarCacheDir, recursive: true);
-            if (File.Exists(_chatCachePath))
-                File.Delete(_chatCachePath);
             AppLog.Write("[Cache] All caches cleared");
         }
         catch (Exception ex)

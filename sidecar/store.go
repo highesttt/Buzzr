@@ -11,6 +11,7 @@ type Store struct {
 	mu       sync.RWMutex
 	rooms    map[string]*Room
 	accounts map[string]*Account
+	db       *SQLiteStore
 }
 
 type Room struct {
@@ -149,12 +150,18 @@ func (s *Store) SetRoom(room *Room) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rooms[room.ID] = room
+	if s.db != nil {
+		s.db.SaveRoom(room)
+	}
 }
 
 func (s *Store) DeleteRoom(roomID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.rooms, roomID)
+	if s.db != nil {
+		s.db.DeleteRoom(roomID)
+	}
 }
 
 func (s *Store) GetRoomsFiltered(accountID string, isPinned, isMuted, isArchived *bool, isLowPriority *bool) []*Room {
@@ -218,6 +225,9 @@ func (s *Store) SetAccount(acct *Account) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.accounts[acct.AccountID] = acct
+	if s.db != nil {
+		s.db.SaveAccount(acct)
+	}
 }
 
 func (s *Store) GetAccounts() []*Account {
@@ -249,4 +259,38 @@ func (s *Store) RoomCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.rooms)
+}
+
+func (s *Store) InitDB(dataDir string) error {
+	db, err := NewSQLiteStore(dataDir)
+	if err != nil {
+		return err
+	}
+	s.db = db
+	return s.db.LoadAll(s)
+}
+
+func (s *Store) CloseDB() {
+	if s.db != nil {
+		s.db.Close()
+	}
+}
+
+func (s *Store) SaveMessage(msg *Message) {
+	if s.db != nil {
+		s.db.SaveMessage(msg)
+	}
+}
+
+func (s *Store) SaveMember(roomID string, member *Member) {
+	if s.db != nil {
+		s.db.SaveMember(roomID, member)
+	}
+}
+
+func (s *Store) GetMessagesFromDB(roomID string, limit int) []*Message {
+	if s.db != nil {
+		return s.db.GetMessages(roomID, limit)
+	}
+	return nil
 }

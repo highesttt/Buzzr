@@ -359,28 +359,8 @@ public sealed partial class SetupPage : Page
 
     private async Task AutoConnectAsync(string token)
     {
-        var cachePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BeeperWinUI", "chat_cache.json");
-        bool hasCache = File.Exists(cachePath);
-
         BeeperApiService.SetBaseUrl(App.Settings.BaseUrl);
         App.Api.SetToken(token);
-
-        if (hasCache)
-        {
-            AppLog.Write("[AutoConnect] Cache exists — deferring to shell");
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                ((App)Application.Current).ShowShell();
-                _ = Task.Run(() =>
-                {
-                    if (!App.IsSidecarRunning)
-                        App.StartSidecar(App.Settings.SidecarPort);
-                });
-            });
-            return;
-        }
 
         ShowProgress("Starting...");
         if (!App.IsSidecarRunning)
