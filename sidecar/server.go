@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const Version = "0.0.1"
+var Version = "0.0.1"
 
 type Server struct {
 	port   int
@@ -291,8 +292,29 @@ func (s *Server) handleConfirmVerification(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts := s.store.GetAccounts()
 	result := make([]APIAccount, len(accounts))
+	base := s.baseURL()
 	for i, a := range accounts {
-		result[i] = AccountToAPIAccount(a)
+		apiAcct := AccountToAPIAccount(a)
+		// Proxy mxc:// avatar URLs through sidecar
+		if strings.HasPrefix(apiAcct.User.ImgURL, "mxc://") {
+			apiAcct.User.ImgURL = fmt.Sprintf("%s/v1/assets/serve?uri=%s", base, url.QueryEscape(apiAcct.User.ImgURL))
+		}
+		// Fallback: find avatar from room member data if still missing
+		if a.AccountID == "hungryserv" && apiAcct.User.ImgURL == "" && a.User != nil {
+			rooms := s.store.GetRoomsFiltered("", nil, nil, nil, nil)
+			for _, room := range rooms {
+				for _, m := range room.GetMembersSnapshot() {
+					if m.UserID == a.User.ID && m.AvatarURL != "" {
+						apiAcct.User.ImgURL = fmt.Sprintf("%s/v1/assets/serve?uri=%s", base, url.QueryEscape(m.AvatarURL))
+						break
+					}
+				}
+				if apiAcct.User.ImgURL != "" {
+					break
+				}
+			}
+		}
+		result[i] = apiAcct
 	}
 	writeJSON(w, http.StatusOK, result)
 }

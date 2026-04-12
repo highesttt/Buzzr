@@ -1771,14 +1771,20 @@ func (mc *MatrixClient) seedAccountsFromWhoAmI(raw json.RawMessage) {
 	}
 
 	if len(whoami.User.Hungryserv) > 0 {
+		acctUser := &AccountUser{
+			ID:       string(mc.userID),
+			FullName: "Beeper",
+			IsSelf:   true,
+		}
+		// Fetch user's avatar from Matrix profile
+		if profile, err := mc.client.GetProfile(context.Background(), mc.userID); err == nil && !profile.AvatarURL.IsEmpty() {
+			acctUser.ImgURL = profile.AvatarURL.String()
+			log.Info().Str("avatar", acctUser.ImgURL).Msg("Got user avatar from profile")
+		}
 		mc.store.SetAccount(&Account{
 			AccountID: "hungryserv",
 			Network:   "Beeper",
-			User: &AccountUser{
-				ID:       string(mc.userID),
-				FullName: "Beeper",
-				IsSelf:   true,
-			},
+			User:      acctUser,
 		})
 		log.Info().Msg("Seeded hungryserv/Beeper account from whoami")
 	}
