@@ -16,7 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-var Version = "0.0.1"
+var Version = "0.0.2"
 
 type Server struct {
 	port   int
