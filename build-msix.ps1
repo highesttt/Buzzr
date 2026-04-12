@@ -115,16 +115,44 @@ if ($msixFile -and -not $SkipSign) {
         }
     }
 
+    # also check NuGet cache for signtool
+    if (-not $signtool) {
+        $nugetPath = Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windows.sdk.buildtools"
+        if (Test-Path $nugetPath) {
+            $signtool = Get-ChildItem $nugetPath -Recurse -Filter "signtool.exe" |
+                Where-Object { $_.FullName -like "*x64*" } |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+        }
+    }
+
     if ($signtool) {
         & $signtool sign /fd SHA256 /a /f $CertPath /p $CertPw $msixFile.FullName
         if ($LASTEXITCODE -eq 0) { Ok "Signed" } else { Warn "Signing failed ($LASTEXITCODE)" }
     } else {
-        Warn "signtool.exe not found, install Windows SDK"
+        Warn "signtool.exe not found (install Windows SDK or restore NuGet packages)"
     }
 
     $final = Join-Path $Out "Buzzr-$Version-$Platform.msix"
     Copy-Item $msixFile.FullName $final -Force
     Ok "Output: $final"
+}
+
+# bundle installer (msix + cert + install script)
+if ($msixFile -and (Test-Path $CertPath)) {
+    Step "Creating installer bundle"
+    $bundleDir = Join-Path $Out "Buzzr-$Version-$Platform-installer"
+    New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+    Copy-Item (Join-Path $Out "Buzzr-$Version-$Platform.msix") $bundleDir -ErrorAction SilentlyContinue
+    if (-not (Test-Path (Join-Path $bundleDir "*.msix"))) {
+        Copy-Item $msixFile.FullName (Join-Path $bundleDir "Buzzr-$Version-$Platform.msix")
+    }
+    Copy-Item $CertPath $bundleDir
+    Copy-Item (Join-Path $Root "install.ps1") $bundleDir
+    $bundleZip = Join-Path $Out "Buzzr-$Version-$Platform-installer.zip"
+    Compress-Archive -Path "$bundleDir\*" -DestinationPath $bundleZip -Force
+    Remove-Item $bundleDir -Recurse -Force
+    Ok "Installer: $bundleZip"
 }
 
 Step "Building portable zip ($Platform $Configuration)"
