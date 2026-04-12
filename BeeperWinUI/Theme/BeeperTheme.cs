@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -56,12 +55,6 @@ public static class T
         ["hungryserv"] = "B",
     };
 
-    // Place square PNG icons in Assets/NetworkIcons/{network}.png — they'll be clipped to circles.
-    // Expected filenames: whatsapp.png, telegram.png, signal.png, discord.png, instagram.png,
-    // messenger.png, facebook.png, imessage.png, slack.png, twitter.png, linkedin.png,
-    // googlechat.png, gmessages.png, line.png, beeper.png, sms.png
-    //
-    // Aliases: hungryserv → beeper, facebook → messenger (so both filenames work)
     static readonly Dictionary<string, string> IconFileAliases = new() {
         ["hungryserv"] = "beeper",
         ["facebook"] = "messenger",
@@ -70,21 +63,18 @@ public static class T
     public static string ResolveNetwork(string accountId, string? network = null)
     {
         var raw = !string.IsNullOrEmpty(network) ? network.ToLowerInvariant() : accountId.ToLowerInvariant();
-        // Self-hosted bridges: "sh-discord", "sh-telegram", etc. — strip sh- from both network and accountId
-        if (raw.StartsWith("sh-"))
+            if (raw.StartsWith("sh-"))
         {
             var afterSh = raw[3..];
             var dash = afterSh.IndexOf('-');
             return dash > 0 ? afterSh[..dash] : afterSh;
         }
-        // If network string provided, try matching against known keys before giving up
         if (!string.IsNullOrEmpty(network))
         {
             if (NetColors.ContainsKey(raw)) return raw;
             foreach (var key in NetColors.Keys)
                 if (raw.Contains(key)) return key;
             if (raw.Contains("beeper") || raw.Contains("hungryserv")) return "hungryserv";
-            // Network string didn't match — fall through to accountId matching
         }
         var id = accountId.ToLowerInvariant();
         foreach (var key in NetColors.Keys)
@@ -124,7 +114,6 @@ public static class T
 
         var container = new Grid();
 
-        // Text fallback (always present, visible until image loads)
         var label = NetLabels.TryGetValue(net, out var lbl)
             ? lbl
             : (string.IsNullOrEmpty(net) ? "?" : net[0].ToString().ToUpper());
@@ -143,9 +132,6 @@ public static class T
             FontFamily = new FontFamily("Segoe UI"),
         });
 
-        // Local PNG icon overlay — loaded from Assets/NetworkIcons/{network}.png on disk.
-        // Uses filesystem path (not ms-appx) for reliability with unpackaged apps.
-        // Starts hidden; visible only when loaded successfully, text label shows as fallback.
         var fileName = IconFileAliases.TryGetValue(net, out var alias) ? alias : net;
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "NetworkIcons", $"{fileName}.png");
         if (File.Exists(iconPath))
@@ -162,19 +148,17 @@ public static class T
             {
                 Source = bmp,
                 Stretch = Stretch.UniformToFill,
-                Opacity = alreadyLoaded ? 1 : 0, // show immediately if already cached
+                Opacity = alreadyLoaded ? 1 : 0,
             };
             img.ImageOpened += (s, _) =>
             {
                 var image = (Image)s;
                 image.Opacity = 1;
-                // Hide text fallback so it doesn't bleed through at circle edges
                 if (image.Parent is Grid g && g.Children[0] is TextBlock tb)
                     tb.Visibility = Visibility.Collapsed;
             };
             img.ImageFailed += (s, _) => ((Image)s).Visibility = Visibility.Collapsed;
             container.Children.Add(img);
-            // If bitmap was already cached, hide text fallback immediately
             if (alreadyLoaded && container.Children[0] is TextBlock fallback)
                 fallback.Visibility = Visibility.Collapsed;
         }
@@ -188,7 +172,6 @@ public static class T
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        // Clip content to the circle
         border.Loaded += (s, _) =>
         {
             var b = (Border)s;

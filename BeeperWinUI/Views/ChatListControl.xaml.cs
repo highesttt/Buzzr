@@ -1,22 +1,16 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
+using System.Numerics;
 using Microsoft.UI;
-using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using System.IO;
-using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
-using System.Numerics;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Windows.UI;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
@@ -30,7 +24,7 @@ public sealed partial class ChatListControl : UserControl
     private static readonly JsonSerializerOptions s_jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public event Action<BeeperChat>? ChatSelected;
-    public event Action<string, string>? MessageReceived; // chatId, messageJson
+    public event Action<string, string>? MessageReceived;
     public event Action? ChatsLoaded;
 
     private string? _selectedChatId;
@@ -49,6 +43,11 @@ public sealed partial class ChatListControl : UserControl
     private static readonly ConcurrentDictionary<string, BitmapImage> _avatarCache = new();
     private CancellationTokenSource? _wsCts;
     private bool _censorMode;
+    private readonly DateTime _startupTime = DateTime.UtcNow;
+
+    private static readonly string _avatarCacheDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "BeeperWinUI", "avatar_cache");
     private string[] _censorLines = [];
     public bool IsCensored => _censorMode;
 
@@ -123,14 +122,12 @@ public sealed partial class ChatListControl : UserControl
 
     private string CensorName(BeeperChat chat)
     {
-        // Deterministic: same chat always gets same line
         var idx = Math.Abs(chat.Id.GetHashCode()) % _censorLines.Length;
         return _censorLines[idx];
     }
 
     private string CensorPreview(BeeperChat chat)
     {
-        // Use a different line than the name by offsetting
         var idx = (Math.Abs(chat.Id.GetHashCode()) + 7) % _censorLines.Length;
         return _censorLines[idx];
     }
@@ -204,30 +201,11 @@ public sealed partial class ChatListControl : UserControl
     {
         try
         {
-            var ids = await Task.Run(() =>
-            {
-                var result = new HashSet<string>();
-                string? cursor = null;
-                bool hasMore = true;
-                while (hasMore)
-                {
-                    using var http = new HttpClient();
-                    http.DefaultRequestHeaders.Authorization =
-                        new AuthenticationHeaderValue("Bearer", App.Settings.AccessToken ?? "");
-                    var url = "http://localhost:23373/v1/chats?inbox=low-priority&limit=50";
-                    if (cursor != null) url += $"&cursor={Uri.EscapeDataString(cursor)}";
-                    var body = http.GetStringAsync(url).GetAwaiter().GetResult();
-                    var response = JsonSerializer.Deserialize<ChatsResponse>(body, s_jsonOptions);
-                    if (response?.Chats == null || response.Chats.Count == 0) break;
-                    foreach (var c in response.Chats) result.Add(c.Id);
-                    cursor = response.OldestCursor;
-                    hasMore = response.HasMore && !string.IsNullOrEmpty(cursor);
-                }
-                return result;
-            });
+            var ids = new HashSet<string>();
+            var resp = await App.Api.GetChatsAsync(limit: 50, inbox: "low-priority");
+            if (resp?.Chats != null)
+                foreach (var c in resp.Chats) ids.Add(c.Id);
 
-            // Safety check: if the API returned ALL chats, the inbox param is being ignored
-            // — don't flag everything as low-priority or the "All" tab becomes empty
             if (ids.Count > 0 && _allChats.Count > 0 && ids.Count >= _allChats.Count * 0.8)
             {
                 AppLog.Write($"[LowPri] API returned {ids.Count}/{_allChats.Count} chats — inbox param likely unsupported, ignoring");
@@ -282,14 +260,7 @@ public sealed partial class ChatListControl : UserControl
             else
             {
                 var query = SearchBox.Text;
-                var tokenStr = App.Settings.AccessToken ?? "";
-                var results = await Task.Run(() => {
-                    using var http = new HttpClient();
-                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenStr);
-                    var body = http.GetStringAsync($"http://localhost:23373/v1/chats/search?q={Uri.EscapeDataString(query)}").GetAwaiter().GetResult();
-                    var resp = JsonSerializer.Deserialize<ChatsResponse>(body, s_jsonOptions);
-                    return resp?.Chats ?? [];
-                });
+                var results = await App.Api.SearchChatsAsync(query);
                 if (!token.IsCancellationRequested)
                 {
                     if (!string.IsNullOrEmpty(_accountFilter))
@@ -351,7 +322,6 @@ public sealed partial class ChatListControl : UserControl
 
     private int GetChatIndexFromBorder(int childIndex)
     {
-        // Divider borders don't have Grid children, so skip them
         int chatIdx = 0;
         for (int i = 0; i < childIndex && i < ListStack.Children.Count; i++)
         {
@@ -361,43 +331,73 @@ public sealed partial class ChatListControl : UserControl
         return chatIdx;
     }
 
+    private static readonly string _chatCachePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "BeeperWinUI", "chat_cache.json");
+
+    private static readonly JsonSerializerOptions s_cacheJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private void SaveChatCache(List<BeeperChat> chats)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(chats, s_cacheJson);
+            File.WriteAllText(_chatCachePath, json);
+            AppLog.Write($"[Cache] Saved {chats.Count} chats to disk");
+        }
+        catch { }
+    }
+
+    private List<BeeperChat>? LoadChatCache()
+    {
+        try
+        {
+            if (!File.Exists(_chatCachePath)) return null;
+            var json = File.ReadAllText(_chatCachePath);
+            var chats = JsonSerializer.Deserialize<List<BeeperChat>>(json, s_cacheJson);
+            if (chats != null && chats.Count > 0)
+            {
+                AppLog.Write($"[Cache] Loaded {chats.Count} chats from disk cache");
+                return chats;
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private async Task LoadAllChatsAsync()
     {
+        var cached = await Task.Run(() => LoadChatCache());
+        if (cached != null && cached.Count > 0)
+        {
+            _allChats = cached;
+            LoadingPanel.Visibility = Visibility.Collapsed;
+            LoadingRing.IsActive = false;
+            ApplyFilters();
+            StartRealTimeUpdates();
+            ChatsLoaded?.Invoke();
+
+            _ = CoordinatedBackgroundSyncAsync();
+            return;
+        }
+
         LoadingPanel.Visibility = Visibility.Visible;
         LoadingRing.IsActive = true;
         LoadingText.Text = "Fetching chats...";
 
         try
         {
-            // Run entire pagination off UI thread to avoid deadlock
-            var allChats = await Task.Run(() =>
-            {
-                var chats = new List<BeeperChat>();
-                string? cursor = null;
-                bool hasMore = true;
-                while (hasMore)
-                {
-                    using var http = new HttpClient();
-                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", App.Settings.AccessToken ?? "");
-                    var url = "http://localhost:23373/v1/chats";
-                    if (cursor != null) url += $"?cursor={Uri.EscapeDataString(cursor)}";
-                    var body = http.GetStringAsync(url).GetAwaiter().GetResult();
-                    var response = JsonSerializer.Deserialize<ChatsResponse>(body, s_jsonOptions);
-                    if (response?.Chats == null || response.Chats.Count == 0) break;
-                    chats.AddRange(response.Chats);
-                    cursor = response.OldestCursor;
-                    hasMore = response.HasMore && !string.IsNullOrEmpty(cursor);
-                }
-                return chats;
-            });
-
+            var allChats = await App.Api.GetAllChatsAsync();
             _allChats = allChats;
-
-            // Fetch low-priority chat IDs from API (local fields are never populated)
             await FetchLowPriorityIdsAsync();
         }
         catch (Exception ex)
         {
+            AppLog.Write($"[ChatList] LoadAllChats error: {ex.Message}");
             if (_allChats.Count == 0)
             {
                 LoadingText.Text = $"Error: {ex.Message}";
@@ -416,44 +416,71 @@ public sealed partial class ChatListControl : UserControl
         LoadingPanel.Visibility = Visibility.Collapsed;
         LoadingRing.IsActive = false;
 
-        // Diagnostic: log Extra keys from first few chats to discover low-priority field names
-        AppLog.Write($"[ChatDebug] Total chats loaded: {_allChats.Count}");
-        foreach (var c in _allChats.Take(5))
-        {
-            AppLog.Write($"[ChatDebug] {c.Title}: AccountId={c.AccountId}, IsLowPriority={c.IsLowPriority}, Priority={c.Priority}, Tags=[{string.Join(",", c.Tags ?? [])}], SpaceId={c.SpaceId ?? "(null)"}, Type={c.Type}");
-            if (c.Extra != null && c.Extra.Count > 0)
-                AppLog.Write($"[ChatDebug]   Extra keys = {string.Join(", ", c.Extra.Keys)}");
-        }
-
-        // Log Telegram chats specifically for low-priority debugging
-        var tgChats = _allChats.Where(c => ResolveNetwork(c.AccountId) is "telegram" or "line").Take(8).ToList();
-        if (tgChats.Count > 0)
-        {
-            AppLog.Write($"[LowPri] Telegram/Line chats sample ({tgChats.Count}):");
-            foreach (var c in tgChats)
-            {
-                AppLog.Write($"  {c.Title}: IsLowPriority={c.IsLowPriority}, Priority={c.Priority}, Tags=[{string.Join(",", c.Tags ?? [])}], Type={c.Type}");
-                if (c.Extra != null && c.Extra.Count > 0)
-                    AppLog.Write($"    Extra: {string.Join(", ", c.Extra.Select(kv => $"{kv.Key}={kv.Value}"))}");
-            }
-        }
-
-        // Log Discord space IDs for server separation debugging
-        var discordChats = _allChats.Where(c => ResolveNetwork(c.AccountId) == "discord").Take(10).ToList();
-        if (discordChats.Count > 0)
-        {
-            AppLog.Write($"[Discord] Discord chats sample ({discordChats.Count}):");
-            foreach (var c in discordChats)
-                AppLog.Write($"  {c.Title}: SpaceId={c.SpaceId ?? "(null)"}, AccountId={c.AccountId}");
-        }
-
-        // Log account IDs found in chats
-        var chatAcctIds = _allChats.Select(c => c.AccountId).Distinct().ToList();
-        AppLog.Write($"[Accounts] Distinct account IDs in chats ({chatAcctIds.Count}): {string.Join(", ", chatAcctIds)}");
+        AppLog.Write($"[ChatList] Loaded {_allChats.Count} chats");
 
         ApplyFilters();
         StartRealTimeUpdates();
         ChatsLoaded?.Invoke();
+
+        _ = Task.Run(() => SaveChatCache(_allChats));
+
+        _ = CoordinatedBackgroundSyncAsync();
+    }
+
+    private async Task CoordinatedBackgroundSyncAsync()
+    {
+        var cachedPinIds = new HashSet<string>(_allChats.Where(c => c.IsPinned).Select(c => c.Id));
+        AppLog.Write($"[Sync] Starting coordinated sync ({cachedPinIds.Count} cached pins)");
+
+        for (int i = 0; i < 30; i++)
+        {
+            await Task.Delay(1000);
+            try
+            {
+                var info = await App.Api.GetInfoAsync();
+                if (info != null)
+                {
+                    _sidecarReady = true;
+                    _avatarCache.Clear();
+                    AppLog.Write("[Sync] Sidecar ready");
+                    break;
+                }
+            }
+            catch { }
+        }
+
+        DispatcherQueue.TryEnqueue(() => ApplyFilters());
+        AppLog.Write("[Sync] Sidecar ready — re-rendered with avatar loading enabled. Pins will update via WebSocket.");
+    }
+
+    private async Task RefreshFirstPageAsync()
+    {
+        try
+        {
+            var page = await App.Api.GetChatsAsync(limit: 50);
+            if (page?.Chats == null || page.Chats.Count == 0) return;
+
+            var freshById = page.Chats.ToDictionary(c => c.Id);
+            for (int i = 0; i < _allChats.Count; i++)
+            {
+                if (freshById.TryGetValue(_allChats[i].Id, out var fresh))
+                {
+                    if (_allChats[i].IsPinned && !fresh.IsPinned)
+                        fresh.IsPinned = true;
+                    _allChats[i] = fresh;
+                }
+            }
+
+            var existingIds = new HashSet<string>(_allChats.Select(c => c.Id));
+            foreach (var c in page.Chats)
+            {
+                if (!existingIds.Contains(c.Id))
+                    _allChats.Add(c);
+            }
+
+            DispatcherQueue.TryEnqueue(() => ApplyFilters());
+        }
+        catch { }
     }
 
     private CancellationTokenSource? _renderCts;
@@ -483,7 +510,6 @@ public sealed partial class ChatListControl : UserControl
 
     private async Task RenderBatchAsync(List<BeeperChat> batch, int startIndex, CancellationToken ct)
     {
-        // Collect pinned chats at the start of the batch to render as a compact bubble grid
         var pinnedChats = new List<BeeperChat>();
         int unpinnedStart = 0;
         if (startIndex == 0)
@@ -495,7 +521,7 @@ public sealed partial class ChatListControl : UserControl
                 else { unpinnedStart = i; break; }
             }
             if (pinnedChats.Count > 0 && unpinnedStart == 0)
-                unpinnedStart = batch.Count; // all are pinned
+                unpinnedStart = batch.Count;
 
             if (pinnedChats.Count > 0)
             {
@@ -546,10 +572,10 @@ public sealed partial class ChatListControl : UserControl
             Padding = new Thickness(4, 8, 4, 8),
         };
 
-        // Avatar with optional unread badge overlay
         var avatarContainer = new Grid
         {
-            Width = avatarSize, Height = avatarSize,
+            Width = avatarSize,
+            Height = avatarSize,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         var bubbleTitle = _censorMode ? CensorName(chat) : (chat.Title ?? "?");
@@ -558,7 +584,6 @@ public sealed partial class ChatListControl : UserControl
             : TryMakeAvatarElement(chat, avatarSize);
         avatarContainer.Children.Add(avatarEl);
 
-        // Network dot
         var netDot = NetDot(chat.AccountId, 10);
         netDot.HorizontalAlignment = HorizontalAlignment.Right;
         netDot.VerticalAlignment = VerticalAlignment.Bottom;
@@ -568,7 +593,6 @@ public sealed partial class ChatListControl : UserControl
         netDot.Width = 12; netDot.Height = 12;
         avatarContainer.Children.Add(netDot);
 
-        // Unread badge
         if (chat.UnreadCount > 0)
         {
             var badge = Badge(chat.UnreadCount);
@@ -579,7 +603,6 @@ public sealed partial class ChatListControl : UserControl
         }
         stack.Children.Add(avatarContainer);
 
-        // Name label
         var name = Lbl(bubbleTitle, 11, Fg2, false, HorizontalAlignment.Center, maxLines: 1);
         name.TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center;
         name.MaxWidth = 80;
@@ -590,6 +613,7 @@ public sealed partial class ChatListControl : UserControl
             Child = stack,
             CornerRadius = new CornerRadius(8),
             Background = B(isSelected ? Selected : Colors.Transparent),
+            Tag = chat.Id
         };
 
         border.PointerEntered += (s, _) =>
@@ -606,7 +630,6 @@ public sealed partial class ChatListControl : UserControl
             SelectChat(chat);
         };
 
-        // Same context menu as regular rows
         border.ContextFlyout = BuildChatContextMenu(chat);
 
         return border;
@@ -637,8 +660,16 @@ public sealed partial class ChatListControl : UserControl
 
         foreach (var child in ListStack.Children)
         {
-            if (child is Border b && b.Child is Grid)
-                b.Background = Transparent;
+            if (child is Border b)
+                b.Background = B(Colors.Transparent);
+            else if (child is Grid pinGrid)
+            {
+                foreach (var pinChild in pinGrid.Children)
+                {
+                    if (pinChild is Border pb)
+                        pb.Background = B(Colors.Transparent);
+                }
+            }
         }
 
         if (hadUnread)
@@ -646,15 +677,22 @@ public sealed partial class ChatListControl : UserControl
             ApplyFilters();
         }
 
-        for (int i = 0; i < ListStack.Children.Count; i++)
+        foreach (var child in ListStack.Children)
         {
-            if (ListStack.Children[i] is Border b && b.Child is Grid)
+            if (child is Border b && b.Tag is string tagId && tagId == chat.Id)
             {
-                var idx = GetChatIndexFromBorder(i);
-                if (idx >= 0 && idx < _displayedChats.Count && _displayedChats[idx].Id == chat.Id)
+                AnimateSelection(b, Selected);
+                break;
+            }
+            else if (child is Grid pinGrid)
+            {
+                foreach (var pinChild in pinGrid.Children)
                 {
-                    AnimateSelection(b, Selected);
-                    break;
+                    if (pinChild is Border pb && pb.Tag is string pinTagId && pinTagId == chat.Id)
+                    {
+                        pb.Background = B(Selected);
+                        break;
+                    }
                 }
             }
         }
@@ -726,9 +764,11 @@ public sealed partial class ChatListControl : UserControl
 
         var border = new Border
         {
-            Child = row, CornerRadius = new CornerRadius(4),
+            Child = row,
+            CornerRadius = new CornerRadius(4),
             Background = B(isSelected ? Selected : Colors.Transparent),
-            Opacity = chat.IsMuted ? 0.7 : 1.0
+            Opacity = chat.IsMuted ? 0.7 : 1.0,
+            Tag = chat.Id
         };
 
         border.PointerEntered += (s, _) =>
@@ -814,43 +854,263 @@ public sealed partial class ChatListControl : UserControl
 
     private FrameworkElement TryMakeAvatarElement(BeeperChat chat, double size = 40)
     {
-        var participants = chat.Participants?.Items;
-        if (participants == null || participants.Count == 0)
-            return Avatar(chat.Title ?? "?", size, NetColor(chat.AccountId));
-
-        var nonSelf = participants.Where(p => !p.IsSelf).ToList();
-
-        if (chat.Type == "group" && nonSelf.Count >= 2)
+        if (chat.Title is "Note to self" or "note to self")
         {
-            var smallSize = size * 0.65;
-            var grid = new Grid { Width = size, Height = size };
-            var first = MakeSmallAvatar(nonSelf[0], smallSize);
-            first.HorizontalAlignment = HorizontalAlignment.Left;
-            first.VerticalAlignment = VerticalAlignment.Top;
-            grid.Children.Add(first);
-            var second = MakeSmallAvatar(nonSelf[1], smallSize);
-            second.HorizontalAlignment = HorizontalAlignment.Right;
-            second.VerticalAlignment = VerticalAlignment.Bottom;
-            grid.Children.Add(second);
-            return grid;
+            return new Border
+            {
+                Width = size,
+                Height = size,
+                CornerRadius = new CornerRadius(size / 2),
+                Background = B(Windows.UI.Color.FromArgb(255, 76, 194, 255)),
+                Child = new FontIcon
+                {
+                    Glyph = "\uE70B",
+                    FontSize = size * 0.45,
+                    Foreground = B(Colors.White),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
         }
 
-        var person = nonSelf.FirstOrDefault() ?? participants.FirstOrDefault();
-        if (person != null && !string.IsNullOrEmpty(person.ImgUrl))
-            return TryMakeAvatarImage(person.ImgUrl, size, chat.Title ?? "?", chat.AccountId);
+        var participants = chat.Participants?.Items;
+
+        var contacts = participants?.Where(p =>
+            !p.IsSelf &&
+            !p.Id.Contains("bot:") &&
+            p.Id != App.Settings.UserId
+        ).ToList() ?? [];
+
+        if (chat.Type != "group" || contacts.Count <= 1)
+        {
+            var person = contacts.FirstOrDefault()
+                ?? participants?.FirstOrDefault(p => !p.Id.Contains("bot:") && p.Id != App.Settings.UserId);
+            if (person != null && !string.IsNullOrEmpty(person.ImgUrl))
+            {
+                var avatar = TryMakeAvatarImage(person.ImgUrl, size, chat.Title ?? "?", chat.AccountId);
+                if (avatar != null) return avatar;
+            }
+
+            if (!string.IsNullOrEmpty(chat.AvatarUrl))
+            {
+                var avatar = TryMakeAvatarImage(chat.AvatarUrl, size, chat.Title ?? "?", chat.AccountId);
+                if (avatar != null) return avatar;
+            }
+        }
+
+        bool hasRealGroupAvatar = false;
+        if (chat.Type == "group" && !string.IsNullOrEmpty(chat.AvatarUrl))
+        {
+            hasRealGroupAvatar = !contacts.Any(c => c.ImgUrl == chat.AvatarUrl)
+                && !(participants?.Any(p => p.ImgUrl == chat.AvatarUrl) ?? false);
+        }
+
+        if (chat.Type == "group" && hasRealGroupAvatar)
+        {
+            var avatar = TryMakeAvatarImage(chat.AvatarUrl!, size, chat.Title ?? "?", chat.AccountId);
+            if (avatar != null) return avatar;
+        }
+
+        if (chat.Type == "group" && contacts.Count(c => !string.IsNullOrEmpty(c.ImgUrl)) >= 2)
+        {
+            var container = new Grid { Width = size, Height = size };
+
+            container.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+            {
+                Width = size,
+                Height = size,
+                Fill = B(Windows.UI.Color.FromArgb(255, 50, 50, 50))
+            });
+
+            var count = Math.Min(contacts.Count, 4);
+            var smallSize = count <= 2 ? size * 0.45 : size * 0.38;
+            var radius = size * 0.22;
+
+            double[][] positions = count switch
+            {
+                2 => [[-0.7, 0], [0.7, 0]],
+                3 => [[0, -0.75], [-0.7, 0.5], [0.7, 0.5]],
+                _ => [[-0.55, -0.55], [0.55, -0.55], [-0.55, 0.55], [0.55, 0.55]],
+            };
+
+            for (int i = 0; i < count; i++)
+            {
+                var avatar = MakeSmallAvatar(contacts[i], smallSize);
+                var cx = (size - smallSize) / 2 + positions[i][0] * radius;
+                var cy = (size - smallSize) / 2 + positions[i][1] * radius;
+                avatar.Margin = new Thickness(cx, cy, 0, 0);
+                avatar.HorizontalAlignment = HorizontalAlignment.Left;
+                avatar.VerticalAlignment = VerticalAlignment.Top;
+                container.Children.Add(avatar);
+            }
+
+            return container;
+        }
+
+        if (chat.Type == "group")
+        {
+            return new Border
+            {
+                Width = size,
+                Height = size,
+                CornerRadius = new CornerRadius(size / 2),
+                Background = B(NetColor(chat.AccountId)),
+                Child = new FontIcon
+                {
+                    Glyph = "\uE716",
+                    FontSize = size * 0.45,
+                    Foreground = B(Colors.White),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+        }
 
         return Avatar(chat.Title ?? "?", size, NetColor(chat.AccountId));
     }
 
-    private static BitmapImage GetCachedBitmap(string url, int size)
+    private static string? ExtractMxcUri(string url)
     {
+        try
+        {
+            var uri = new Uri(url);
+            var queryStr = uri.Query.TrimStart('?');
+            foreach (var part in queryStr.Split('&'))
+            {
+                var kv = part.Split('=', 2);
+                if (kv.Length == 2 && kv[0] == "uri")
+                {
+                    var mxc = Uri.UnescapeDataString(kv[1]);
+                    if (mxc.StartsWith("mxc://"))
+                        return mxc;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static string MxcToFileName(string mxcUri)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(mxcUri));
+        return Convert.ToHexString(bytes).ToLowerInvariant() + ".img";
+    }
+
+    private static bool _sidecarReady = false;
+    private DateTime _lastTagEvent = DateTime.MinValue;
+    private bool _tagRefreshPending = false;
+
+    private async Task DebouncedTagRefreshAsync()
+    {
+        while ((DateTime.UtcNow - _lastTagEvent).TotalSeconds < 3)
+            await Task.Delay(1000);
+        _tagRefreshPending = false;
+
+        await RefreshFirstPageAsync();
+        _ = Task.Run(() => SaveChatCache(_allChats));
+    }
+
+    public static BitmapImage? GetCachedBitmapPublic(string url, int size) => GetCachedBitmap(url, size);
+
+    private static BitmapImage? GetCachedBitmap(string url, int size)
+    {
+        var pixelSize = size * 2;
+
         return _avatarCache.GetOrAdd(url, u =>
         {
-            var bmp = new BitmapImage(new Uri(u));
-            bmp.DecodePixelWidth = size;
-            bmp.DecodePixelHeight = size;
-            return bmp;
+            var mxc = ExtractMxcUri(u);
+            if (mxc != null)
+            {
+                var fileName = MxcToFileName(mxc);
+                var filePath = Path.Combine(_avatarCacheDir, fileName);
+                if (File.Exists(filePath))
+                {
+                    var bmp = new BitmapImage();
+                    bmp.DecodePixelWidth = pixelSize;
+                    bmp.DecodePixelHeight = pixelSize;
+                    bmp.UriSource = new Uri(filePath);
+                    return bmp;
+                }
+
+                if (_sidecarReady)
+                {
+                    var bmp = new BitmapImage(new Uri(u));
+                    bmp.DecodePixelWidth = pixelSize;
+                    bmp.DecodePixelHeight = pixelSize;
+                    _ = SaveAvatarToDiskAsync(u, filePath);
+                    return bmp;
+                }
+
+                return null!;
+            }
+
+            if (!_sidecarReady) return null!;
+
+            var fallback = new BitmapImage(new Uri(u));
+            fallback.DecodePixelWidth = pixelSize;
+            fallback.DecodePixelHeight = pixelSize;
+            return fallback;
         });
+    }
+
+    private static async Task SaveAvatarToDiskAsync(string url, string filePath)
+    {
+        try
+        {
+            Directory.CreateDirectory(_avatarCacheDir);
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var token = App.Settings.AccessToken;
+            if (!string.IsNullOrEmpty(token))
+                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var data = await http.GetByteArrayAsync(url);
+            await File.WriteAllBytesAsync(filePath, data);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[AvatarCache] Failed to save {Path.GetFileName(filePath)}: {ex.Message}");
+        }
+    }
+
+    public static (int count, long bytes) GetAvatarCacheStats()
+    {
+        try
+        {
+            if (!Directory.Exists(_avatarCacheDir)) return (0, 0);
+            var files = Directory.GetFiles(_avatarCacheDir);
+            long total = 0;
+            foreach (var f in files)
+                total += new FileInfo(f).Length;
+            return (files.Length, total);
+        }
+        catch { return (0, 0); }
+    }
+
+    public static long GetChatCacheSize()
+    {
+        try
+        {
+            if (!File.Exists(_chatCachePath)) return 0;
+            return new FileInfo(_chatCachePath).Length;
+        }
+        catch { return 0; }
+    }
+
+    public static void ClearAllCaches()
+    {
+        try
+        {
+            _avatarCache.Clear();
+            if (Directory.Exists(_avatarCacheDir))
+                Directory.Delete(_avatarCacheDir, recursive: true);
+            if (File.Exists(_chatCachePath))
+                File.Delete(_chatCachePath);
+            AppLog.Write("[Cache] All caches cleared");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Cache] Error clearing caches: {ex.Message}");
+        }
     }
 
     private static FrameworkElement MakeSmallAvatar(BeeperUser user, double size)
@@ -860,10 +1120,12 @@ public sealed partial class ChatListControl : UserControl
             try
             {
                 var bmp = GetCachedBitmap(user.ImgUrl, (int)size);
+                if (bmp == null) throw new Exception("no cache");
                 var img = new Image { Source = bmp, Width = size, Height = size, Stretch = Stretch.UniformToFill };
                 return new Border
                 {
-                    Width = size, Height = size,
+                    Width = size,
+                    Height = size,
                     CornerRadius = new CornerRadius(size / 2),
                     Child = img,
                     BorderBrush = B(Surface),
@@ -879,17 +1141,18 @@ public sealed partial class ChatListControl : UserControl
         return av;
     }
 
-    private static Border TryMakeAvatarImage(string imgUrl, double size, string fallbackName, string accountId)
+    private static Border? TryMakeAvatarImage(string imgUrl, double size, string fallbackName, string accountId)
     {
         try
         {
             var bmp = GetCachedBitmap(imgUrl, (int)size);
+            if (bmp == null) return null;
             var img = new Image { Source = bmp, Width = size, Height = size, Stretch = Stretch.UniformToFill };
             return new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size / 2), Child = img };
         }
         catch
         {
-            return Avatar(fallbackName, size, NetColor(accountId));
+            return null;
         }
     }
 
@@ -1025,7 +1288,7 @@ public sealed partial class ChatListControl : UserControl
                 {
                     using var ws = new ClientWebSocket();
                     ws.Options.SetRequestHeader("Authorization", $"Bearer {token}");
-                    await ws.ConnectAsync(new Uri("ws://localhost:23373/v1/ws"), cts.Token);
+                    await ws.ConnectAsync(new Uri($"{BeeperApiService.WsBaseUrl}/v1/ws"), cts.Token);
 
                     var subMsg = Encoding.UTF8.GetBytes(
                         "{\"type\":\"subscriptions.set\",\"chatIDs\":[\"*\"]}");
@@ -1077,17 +1340,24 @@ public sealed partial class ChatListControl : UserControl
                 if (root.TryGetProperty("chat", out var chatEl))
                 {
                     var rawChat = chatEl.GetRawText();
-                    AppLog.Write($"[WS] chat.upserted raw (len={rawChat.Length}): {rawChat[..Math.Min(500, rawChat.Length)]}");
                     var chat = JsonSerializer.Deserialize<BeeperChat>(rawChat, s_jsonOptions);
                     if (chat != null)
                     {
-                        AppLog.Write($"[WS] chat.upserted: {chat.Title}, Preview={chat.Preview?.Text ?? "(null)"}");
                         DispatcherQueue.TryEnqueue(() =>
                         {
                             UpsertChatInList(chat);
                             ApplyFilters();
                         });
                     }
+                }
+            }
+            else if (evtType == "tags.updated")
+            {
+                _lastTagEvent = DateTime.UtcNow;
+                if (!_tagRefreshPending)
+                {
+                    _tagRefreshPending = true;
+                    _ = DebouncedTagRefreshAsync();
                 }
             }
             else if (evtType == "message.upserted")
@@ -1098,21 +1368,15 @@ public sealed partial class ChatListControl : UserControl
                 string? previewOverride = null;
                 if (root.TryGetProperty("message", out var msgEl))
                 {
-                    // Log raw message JSON for debugging preview issues (truncated)
-                    var rawMsg = msgEl.GetRawText();
-                    AppLog.Write($"[WS] message.upserted raw (len={rawMsg.Length}): {rawMsg[..Math.Min(500, rawMsg.Length)]}");
-
                     if (msgEl.TryGetProperty("chatID", out var cidEl))
                         chatId = cidEl.GetString();
                     if (msgEl.TryGetProperty("timestamp", out var tsEl))
                         msgTimestamp = tsEl.GetString();
                     if (msgEl.TryGetProperty("text", out var txtEl))
                         msgText = txtEl.GetString();
-                    // Fallback: some bridges use "body" instead of "text"
                     if (string.IsNullOrEmpty(msgText) && msgEl.TryGetProperty("body", out var bodyEl))
                         msgText = bodyEl.GetString();
 
-                    // Extract attachment preview for non-text messages
                     if (string.IsNullOrEmpty(msgText) && msgEl.TryGetProperty("attachments", out var attArr)
                         && attArr.ValueKind == JsonValueKind.Array && attArr.GetArrayLength() > 0)
                     {
@@ -1195,17 +1459,7 @@ public sealed partial class ChatListControl : UserControl
     {
         try
         {
-            var updated = await Task.Run(() =>
-            {
-                using var http = new HttpClient();
-                http.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer",
-                        App.Settings.AccessToken ?? "");
-                var body = http.GetStringAsync(
-                    $"http://localhost:23373/v1/chats/{Uri.EscapeDataString(chatId)}")
-                    .GetAwaiter().GetResult();
-                return JsonSerializer.Deserialize<BeeperChat>(body, s_jsonOptions);
-            });
+            var updated = await App.Api.GetChatAsync(chatId);
 
             if (updated != null)
             {
@@ -1217,13 +1471,10 @@ public sealed partial class ChatListControl : UserControl
                         var cmp = string.Compare(existing.LastActivity, updated.LastActivity ?? "", StringComparison.Ordinal);
                         if (cmp > 0)
                         {
-                            // WS already advanced timestamp beyond what API returned — keep WS data
                             updated.LastActivity = existing.LastActivity;
                             if (!string.IsNullOrEmpty(existing.Preview?.Text))
                                 updated.Preview = existing.Preview;
                         }
-                        // Single-chat GET doesn't return preview ("in list responses" only) —
-                        // always preserve existing preview when API returns empty/null
                         if (string.IsNullOrEmpty(updated.Preview?.Text) && !string.IsNullOrEmpty(existing.Preview?.Text))
                             updated.Preview = existing.Preview;
                         AppLog.Write($"[Refresh] {updated.Title}: existing.LA={existing.LastActivity}, updated.LA={updated.LastActivity}, preview='{updated.Preview?.Text}'");
@@ -1241,8 +1492,6 @@ public sealed partial class ChatListControl : UserControl
         var idx = _allChats.FindIndex(c => c.Id == chat.Id);
         if (idx >= 0)
         {
-            // Preserve existing preview if the incoming chat has no preview
-            // (chat.upserted and single-chat GET often don't include preview text)
             var existing = _allChats[idx];
             if (string.IsNullOrEmpty(chat.Preview?.Text) && !string.IsNullOrEmpty(existing.Preview?.Text))
                 chat.Preview = existing.Preview;

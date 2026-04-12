@@ -1,5 +1,3 @@
-using Microsoft.UI;
-using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -8,13 +6,9 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Collections.Concurrent;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using BeeperWinUI.Services;
 using static BeeperWinUI.Theme.T;
 
@@ -111,7 +105,7 @@ public sealed partial class MessageView : UserControl
                 };
                 inputs[1] = new Windows.UI.Input.Preview.Injection.InjectedInputKeyboardInfo
                 {
-                    VirtualKey = 0xBE, // VK_OEM_PERIOD
+                    VirtualKey = 0xBE,
                     KeyOptions = Windows.UI.Input.Preview.Injection.InjectedInputKeyOptions.None
                 };
                 inputs[2] = new Windows.UI.Input.Preview.Injection.InjectedInputKeyboardInfo
@@ -334,15 +328,7 @@ public sealed partial class MessageView : UserControl
         MessagesResponse? response = null;
         try
         {
-            response = await Task.Run(async () =>
-            {
-                using var http = new HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(15);
-                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                var encoded = Uri.EscapeDataString(chatIdCopy);
-                var body = await http.GetStringAsync($"http://localhost:23373/v1/chats/{encoded}/messages");
-                return JsonSerializer.Deserialize<MessagesResponse>(body, _json);
-            });
+            response = await App.Api.GetMessagesAsync(chatIdCopy);
         }
         catch (Exception)
         {
@@ -371,7 +357,7 @@ public sealed partial class MessageView : UserControl
         }
 
         var sorted = response.Messages.OrderBy(m => m.SortKey).ToList();
-        _msgCursor = sorted.FirstOrDefault()?.SortKey ?? response.OldestCursor;
+        _msgCursor = response.OldestCursor ?? response.Cursor;
         _msgHasMore = response.HasMore;
         _allMessages = response.Messages;
 
@@ -404,27 +390,20 @@ public sealed partial class MessageView : UserControl
             var tokenCopy = App.Settings.AccessToken ?? "";
             var response = await Task.Run(async () =>
             {
-                using var http = new HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(10);
-                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenCopy);
-                var encoded = Uri.EscapeDataString(chatIdCopy);
-                var url = $"http://localhost:23373/v1/chats/{encoded}/messages?cursor={Uri.EscapeDataString(cursorCopy)}&direction=before";
-                var body = await http.GetStringAsync(url);
-                return JsonSerializer.Deserialize<MessagesResponse>(body, _json);
+                return await App.Api.GetMessagesAsync(chatIdCopy, cursor: cursorCopy, direction: "before");
             });
             MsgStack.Children.Remove(loadingIndicator);
 
             if (response?.Messages != null && response.Messages.Count > 0)
             {
                 var olderSorted = response.Messages.OrderBy(m => m.SortKey).ToList();
-                _msgCursor = olderSorted.FirstOrDefault()?.SortKey ?? response.OldestCursor;
+                _msgCursor = response.OldestCursor ?? response.Cursor;
                 _msgHasMore = response.HasMore;
 
                 _allMessages.InsertRange(0, response.Messages);
                 foreach (var m in response.Messages)
                     _messageMap[m.Id] = m;
 
-                // Insert at beginning instead of full re-render to preserve optimistic messages
                 var olderByTime = response.Messages
                     .Where(m => m.Type != "REACTION")
                     .Where(m => !(string.IsNullOrEmpty(m.Text) && (m.Attachments == null || m.Attachments.Count == 0) && m.Type == "TEXT"))
@@ -527,34 +506,47 @@ public sealed partial class MessageView : UserControl
         HeaderAvatarContainer.Visibility = Visibility.Collapsed;
 
         string? imgUrl = null;
+
         if (chat.Participants?.Items != null)
         {
-            var other = chat.Participants.Items.FirstOrDefault(p => !p.IsSelf);
-            imgUrl = other?.ImgUrl ?? chat.Participants.Items.FirstOrDefault()?.ImgUrl;
+            var contact = chat.Participants.Items.FirstOrDefault(p =>
+                !p.IsSelf &&
+                !p.Id.Contains("bot:") &&
+                p.Id != App.Settings.UserId &&
+                !string.IsNullOrEmpty(p.ImgUrl));
+            imgUrl = contact?.ImgUrl;
         }
+
+        if (string.IsNullOrEmpty(imgUrl) && !string.IsNullOrEmpty(chat.AvatarUrl))
+            imgUrl = chat.AvatarUrl;
 
         Border avatarBorder;
         if (!string.IsNullOrEmpty(imgUrl))
         {
             try
             {
-                var bmp = new BitmapImage(new Uri(imgUrl));
-                bmp.DecodePixelWidth = 36;
-                bmp.DecodePixelHeight = 36;
-                var img = new Image
+                var bmp = ChatListControl.GetCachedBitmapPublic(imgUrl, 36);
+                if (bmp != null)
                 {
-                    Source = bmp,
-                    Width = 36,
-                    Height = 36,
-                    Stretch = Stretch.UniformToFill
-                };
-                avatarBorder = new Border
+                    var img = new Image
+                    {
+                        Source = bmp,
+                        Width = 36,
+                        Height = 36,
+                        Stretch = Stretch.UniformToFill
+                    };
+                    avatarBorder = new Border
+                    {
+                        Width = 36,
+                        Height = 36,
+                        CornerRadius = new CornerRadius(18),
+                        Child = img
+                    };
+                }
+                else
                 {
-                    Width = 36,
-                    Height = 36,
-                    CornerRadius = new CornerRadius(18),
-                    Child = img
-                };
+                    avatarBorder = Avatar(chat.Title ?? "?", 36, NetColor(chat.AccountId));
+                }
             }
             catch
             {

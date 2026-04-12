@@ -54,6 +54,12 @@
                             <MenuFlyoutItem x:Name="UserNameItem" IsEnabled="False"/>
                             <MenuFlyoutItem x:Name="AccountCountItem" IsEnabled="False"/>
                             <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem x:Name="SettingsItem" Text="Settings">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE713;"/>
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator/>
                             <MenuFlyoutItem x:Name="DisconnectItem" Text="Disconnect"
                                             Foreground="#FF4343">
                                 <MenuFlyoutItem.Icon>

@@ -59,6 +59,29 @@ if (-not $SkipSign) {
     }
 }
 
+# build Go sidecar
+Step "Building Go sidecar"
+$sidecarDir = Join-Path $Root "sidecar"
+$sidecarExe = Join-Path $sidecarDir "beeper-sidecar.exe"
+$savedCC = $env:CC
+$savedCGO = $env:CGO_ENABLED
+try {
+    $env:CC = "E:\Programs\msys64\ucrt64\bin\gcc.exe"
+    $env:CGO_ENABLED = "1"
+    Push-Location $sidecarDir
+    & go build -tags goolm -ldflags "-s -w" -o beeper-sidecar.exe .
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) {
+        Warn "Sidecar build failed (continuing without it)"
+    } elseif (Test-Path $sidecarExe) {
+        $sidecarSize = (Get-Item $sidecarExe).Length / 1MB
+        Ok "Built beeper-sidecar.exe ($([math]::Round($sidecarSize, 1)) MB)"
+    }
+} finally {
+    $env:CC = $savedCC
+    $env:CGO_ENABLED = $savedCGO
+}
+
 # placeholder assets
 Step "Visual assets"
 $assetsDir = Join-Path $Root "BeeperWinUI\Assets"

@@ -20,6 +20,11 @@
     <Content Include="Assets\censor.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Bundle Go sidecar binary alongside the app (built by build-msix.ps1 or manually) -->
+    <Content Include="..\sidecar\beeper-sidecar.exe" Condition="Exists('..\sidecar\beeper-sidecar.exe')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>beeper-sidecar.exe</Link>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

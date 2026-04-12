@@ -1,16 +1,10 @@
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Numerics;
 using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.UI;
-using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
-using System.Diagnostics;
 using BeeperWinUI.Services;
 using static BeeperWinUI.Theme.T;
 
@@ -41,6 +35,7 @@ public sealed partial class ShellPage : Page
             ChatList.FilterByAccount(null);
         };
 
+        SettingsItem.Click += (s, e) => App.RootFrame?.Navigate(typeof(SettingsPage));
         DisconnectItem.Click += (s, e) => ((App)Application.Current).Disconnect();
         AboutItem.Click += (s, e) => _ = ShowAboutAsync();
 
@@ -65,29 +60,60 @@ public sealed partial class ShellPage : Page
         OpenTerminal = null;
     }
 
+    private static readonly string _accountCachePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "BeeperWinUI", "accounts_cache.json");
+
     private async Task LoadAccountsAsync()
     {
         try
         {
-            var tokenStr = App.Settings.AccessToken ?? "";
-            _accounts = await Task.Run(() => {
-                using var http = new HttpClient();
-                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenStr);
-                var body = http.GetStringAsync("http://localhost:23373/v1/accounts").GetAwaiter().GetResult();
-                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                try { var list = JsonSerializer.Deserialize<List<BeeperAccount>>(body, opts); if (list?.Count > 0) return list; } catch { }
-                try { var w = JsonSerializer.Deserialize<AccountsResponse>(body, opts); var items = w?.Items ?? w?.Accounts; if (items?.Count > 0) return items; } catch { }
-                return new List<BeeperAccount>();
-            });
-            AppLog.Write($"[Accounts] Loaded {_accounts.Count} accounts from API:");
-            foreach (var a in _accounts)
-                AppLog.Write($"  [{a.AccountId}] Network={a.Network}");
-
-            ChatList.SetAccounts(_accounts);
-            RenderAccountIcons();
-            UpdateSettingsFlyout();
+            if (File.Exists(_accountCachePath))
+            {
+                var json = await Task.Run(() => File.ReadAllText(_accountCachePath));
+                var cached = JsonSerializer.Deserialize<List<BeeperAccount>>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (cached != null && cached.Count > 0)
+                {
+                    cached.RemoveAll(a => a.AccountId is "slackgo" or "imessagego" or "signalgo"
+                        && a.User?.FullName == a.Network);
+                    _accounts = cached;
+                    AppLog.Write($"[Accounts] Loaded {cached.Count} accounts from cache");
+                    ChatList.SetAccounts(_accounts);
+                    RenderAccountIcons();
+                    UpdateSettingsFlyout();
+                }
+            }
         }
         catch { }
+
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            await Task.Delay(2000);
+            try
+            {
+                var accounts = await App.Api.GetAccountsAsync();
+                if (accounts.Count > 0 && accounts.Count >= _accounts.Count)
+                {
+                    _accounts = accounts;
+                    AppLog.Write($"[Accounts] Loaded {accounts.Count} accounts from API (attempt {attempt})");
+                    ChatList.SetAccounts(_accounts);
+                    RenderAccountIcons();
+                    UpdateSettingsFlyout();
+                    _ = Task.Run(() =>
+                    {
+                        try
+                        {
+                            var j = JsonSerializer.Serialize(accounts);
+                            File.WriteAllText(_accountCachePath, j);
+                        }
+                        catch { }
+                    });
+                    return;
+                }
+            }
+            catch { }
+        }
     }
 
     private void RenderAccountIcons()
@@ -194,7 +220,6 @@ public sealed partial class ShellPage : Page
 
     private void UpdateDiscordSubIcons()
     {
-        // Detect accounts that have chats but weren't returned by /v1/accounts
         var chatAccountIds = ChatList.GetAllChatAccountIds();
         var knownIds = new HashSet<string>(_accounts.Select(a => a.AccountId));
         int added = 0;
@@ -202,6 +227,11 @@ public sealed partial class ShellPage : Page
         {
             if (!knownIds.Contains(aid))
             {
+                if (aid is "slackgo" or "imessagego" or "telegramgo" or "signalgo" or "instagramgo" or "twittergo")
+                {
+                    AppLog.Write($"[Accounts] Skipping synthetic account for {aid} (not confirmed by API)");
+                    continue;
+                }
                 AppLog.Write($"[Accounts] Missing from API, found in chats: {aid}");
                 var synthetic = new BeeperAccount { AccountId = aid };
                 _accounts.Add(synthetic);
@@ -217,7 +247,6 @@ public sealed partial class ShellPage : Page
             RenderAccountIcons();
         }
 
-        // Log Discord space info for debugging
         foreach (var account in _accounts)
         {
             var net = ResolveNetwork(account.AccountId, account.Network);
@@ -230,7 +259,6 @@ public sealed partial class ShellPage : Page
             }
         }
 
-        // For each Discord account with multiple spaces (servers), insert sub-icons
         int insertOffset = 0;
         for (int i = 0; i < _accounts.Count; i++)
         {
@@ -286,24 +314,24 @@ public sealed partial class ShellPage : Page
 
     private void UpdateSettingsFlyout()
     {
-        BeeperUser? selfUser = null;
-        foreach (var a in _accounts)
-        {
-            if (a.User?.IsSelf == true) { selfUser = a.User; break; }
-        }
-        if (selfUser == null && _accounts.Count > 0)
-            selfUser = _accounts[0].User;
+        string displayName = "User";
 
-        if (selfUser != null)
+        var beeperAcct = _accounts.FirstOrDefault(a => a.AccountId == "hungryserv");
+        if (beeperAcct?.User != null)
         {
-            var name = selfUser.FullName ?? selfUser.DisplayText ?? selfUser.Username ?? "User";
-            UserNameItem.Text = name;
-        }
-        else
-        {
-            UserNameItem.Text = "User";
+            var name = beeperAcct.User.FullName ?? beeperAcct.User.Username ?? beeperAcct.User.DisplayText;
+            if (!string.IsNullOrEmpty(name) && name != "Beeper" && name != beeperAcct.Network)
+                displayName = name;
         }
 
+        if (displayName == "User")
+        {
+            var userId = App.Settings.UserId;
+            if (!string.IsNullOrEmpty(userId) && userId.StartsWith("@") && userId.Contains(":"))
+                displayName = userId[1..userId.IndexOf(':')];
+        }
+
+        UserNameItem.Text = displayName;
         AccountCountItem.Text = $"{_accounts.Count} connected account{(_accounts.Count != 1 ? "s" : "")}";
     }
 
@@ -383,7 +411,6 @@ public sealed partial class ShellPage : Page
             MinWidth = 500,
         };
 
-        // Style the dialog title
         dialog.Resources["ContentDialogForeground"] = B(Microsoft.UI.Colors.LimeGreen);
 
         inputBox.KeyDown += (s, e) =>

@@ -6,7 +6,6 @@ using System.Text.Json.Serialization;
 
 namespace BeeperWinUI.Services;
 
-/// <summary>Simple file logger — writes to %LOCALAPPDATA%\BeeperWinUI\debug.log</summary>
 public static class AppLog
 {
     private static readonly string _path;
@@ -28,30 +27,40 @@ public static class AppLog
 public class BeeperApiService : IDisposable
 {
     private readonly JsonSerializerOptions _json;
-    private const string BaseUrl = "http://localhost:23373";
+    private static string BaseUrl = "http://localhost:23373";
     private string? _token;
+
+    private static readonly SocketsHttpHandler _handler = new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        MaxConnectionsPerServer = 20,
+    };
+    private static readonly HttpClient _http = new(_handler)
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
 
     public bool IsConnected { get; private set; }
     public string? LastError { get; private set; }
+
+    public static string ApiBaseUrl => BaseUrl;
+    public static string WsBaseUrl => BaseUrl.Replace("http://", "ws://").Replace("https://", "wss://");
+    public static void SetBaseUrl(string url) => BaseUrl = url.TrimEnd('/');
 
     public BeeperApiService()
     {
         _json = new JsonSerializerOptions
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             PropertyNameCaseInsensitive = true
         };
     }
 
-    public void SetToken(string token) => _token = token;
-
-    private HttpClient MakeClient()
+    public void SetToken(string token)
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        if (_token != null)
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-        return http;
+        _token = token;
+        _http.DefaultRequestHeaders.Authorization =
+            string.IsNullOrEmpty(token) ? null : new AuthenticationHeaderValue("Bearer", token);
     }
 
     private static void Log(string msg) => AppLog.Write($"[BeeperApi] {msg}");
@@ -76,6 +85,51 @@ public class BeeperApiService : IDisposable
     {
         var info = await GetInfoAsync();
         return info != null;
+    }
+
+    public async Task<AuthLoginResponse?> AuthLoginAsync(string email)
+    {
+        return await PostAsync<AuthLoginResponse>("/v1/auth/login", new { email });
+    }
+
+    public async Task<AuthVerifyResponse?> AuthVerifyAsync(string email, string code)
+    {
+        return await PostAsync<AuthVerifyResponse>("/v1/auth/verify", new { email, code });
+    }
+
+    public async Task<AuthStatusResponse?> AuthStatusAsync()
+    {
+        return await GetAsync<AuthStatusResponse>("/v1/auth/status");
+    }
+
+    public async Task AuthLogoutAsync()
+    {
+        await PostAsync<object>("/v1/auth/logout", new { });
+    }
+
+    public async Task<RecoveryKeyResponse?> ImportRecoveryKeyAsync(string recoveryKey)
+    {
+        return await PostAsync<RecoveryKeyResponse>("/v1/auth/recovery", new { recoveryKey });
+    }
+
+    public async Task<VerificationStartResponse?> StartDeviceVerificationAsync()
+    {
+        return await PostAsync<VerificationStartResponse>("/v1/auth/verify-device", new { });
+    }
+
+    public async Task<VerificationStatusResponse?> GetVerificationStatusAsync()
+    {
+        return await GetAsync<VerificationStatusResponse>("/v1/auth/verify-device/status");
+    }
+
+    public async Task<VerificationConfirmResponse?> ConfirmVerificationAsync()
+    {
+        return await PostAsync<VerificationConfirmResponse>("/v1/auth/verify-device/confirm", new { });
+    }
+
+    public async Task<RecoveryKeyResponse?> ImportBeeperDesktopKeysAsync()
+    {
+        return await PostWithTimeoutAsync<RecoveryKeyResponse>("/v1/auth/import-beeper-keys", new { }, TimeSpan.FromMinutes(10));
     }
 
     public async Task<List<BeeperAccount>> GetAccountsAsync()
@@ -115,7 +169,8 @@ public class BeeperApiService : IDisposable
         if (isArchived != null) url += $"&isArchived={isArchived.Value.ToString().ToLower()}";
         if (query != null) url += $"&q={Uri.EscapeDataString(query)}";
         if (inbox != null) url += $"&inbox={Uri.EscapeDataString(inbox)}";
-        return await GetAsync<ChatsResponse>(url);
+        var result = await GetAsync<ChatsResponse>(url);
+        return result;
     }
 
     public async Task<List<BeeperChat>> SearchChatsAsync(string query)
@@ -175,8 +230,10 @@ public class BeeperApiService : IDisposable
     {
         var all = new List<BeeperChat>();
         string? cursor = null;
+        string? prevCursor = null;
         bool hasMore = true;
-        while (hasMore)
+        int maxPages = 100;
+        while (hasMore && maxPages-- > 0)
         {
             var page = await GetChatsAsync(limit: 50, cursor: cursor, accountId: accountId);
             if (page?.Chats == null || page.Chats.Count == 0) break;
@@ -184,11 +241,13 @@ public class BeeperApiService : IDisposable
             hasMore = page.HasMore;
             cursor = page.OldestCursor;
             if (string.IsNullOrEmpty(cursor)) break;
+            if (cursor == prevCursor) break;
+            prevCursor = cursor;
         }
         return all;
     }
 
-    public async Task<MessagesResponse?> GetMessagesAsync(string chatId, int limit = 50, string? cursor = null, string? direction = null)
+    public async Task<MessagesResponse?> GetMessagesAsync(string chatId, int limit = 25, string? cursor = null, string? direction = null)
     {
         var url = $"/v1/chats/{Uri.EscapeDataString(chatId)}/messages?limit={limit}";
         if (cursor != null) url += $"&cursor={Uri.EscapeDataString(cursor)}";
@@ -239,25 +298,21 @@ public class BeeperApiService : IDisposable
         Log($"[Delete] chatId={chatId}, messageId={messageId}");
         Log($"[Delete] path={path}");
 
-        // Attempt 1: HTTP DELETE (standard REST)
         LastError = null;
         var r1 = await DeleteAsync<object>(path);
         Log($"[Delete] DELETE result={r1 != null}, LastError={LastError}");
         if (LastError == null) return true;
 
-        // Attempt 2: POST /delete
         LastError = null;
         var r2 = await PostAsync<object>(path + "/delete", new { });
         Log($"[Delete] POST /delete result={r2 != null}, LastError={LastError}");
         if (LastError == null) return true;
 
-        // Attempt 3: POST /redact (Matrix terminology)
         LastError = null;
         var r3 = await PostAsync<object>(path + "/redact", new { });
         Log($"[Delete] POST /redact result={r3 != null}, LastError={LastError}");
         if (LastError == null) return true;
 
-        // Attempt 4: POST with body specifying message ID
         LastError = null;
         var deletePath = $"/v1/chats/{Uri.EscapeDataString(chatId)}/messages/delete";
         var r4 = await PostAsync<object>(deletePath, new { messageID = messageId });
@@ -286,7 +341,7 @@ public class BeeperApiService : IDisposable
         return Task.Run(() =>
         {
             Log($"POST /v1/assets/upload ({fileName}, {fileBytes.Length} bytes)");
-            using var http = MakeClient();
+            var http = _http;
             using var form = new MultipartFormDataContent();
             var fileContent = new ByteArrayContent(fileBytes);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
@@ -387,7 +442,7 @@ public class BeeperApiService : IDisposable
         return Task.Run(() =>
         {
             Log($"GET {path}");
-            using var http = MakeClient();
+            var http = _http;
             var response = http.GetAsync(BaseUrl + path).GetAwaiter().GetResult();
             var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
@@ -406,9 +461,32 @@ public class BeeperApiService : IDisposable
         return Task.Run(() =>
         {
             Log($"POST {path}");
-            using var http = MakeClient();
+            var http = _http;
             var content = new StringContent(JsonSerializer.Serialize(payload, _json), Encoding.UTF8, "application/json");
             var response = http.PostAsync(BaseUrl + path, content).GetAwaiter().GetResult();
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (!response.IsSuccessStatusCode)
+            {
+                LastError = $"POST {path}: {response.StatusCode} - {body}";
+                Log(LastError);
+                return null;
+            }
+            Log($"POST {path} -> {response.StatusCode} ({body.Length} bytes)");
+            if (string.IsNullOrWhiteSpace(body) || body == "{}") return null;
+            return JsonSerializer.Deserialize<T>(body, _json);
+        });
+    }
+
+    private Task<T?> PostWithTimeoutAsync<T>(string path, object payload, TimeSpan timeout) where T : class
+    {
+        return Task.Run(() =>
+        {
+            Log($"POST {path} (timeout={timeout.TotalSeconds}s)");
+            using var cts = new CancellationTokenSource(timeout);
+            using var longHttp = new HttpClient { Timeout = timeout };
+            longHttp.DefaultRequestHeaders.Authorization = _http.DefaultRequestHeaders.Authorization;
+            var content = new StringContent(JsonSerializer.Serialize(payload, _json), Encoding.UTF8, "application/json");
+            var response = longHttp.PostAsync(BaseUrl + path, content, cts.Token).GetAwaiter().GetResult();
             var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
@@ -427,7 +505,7 @@ public class BeeperApiService : IDisposable
         return Task.Run(() =>
         {
             Log($"PUT {path}");
-            using var http = MakeClient();
+            var http = _http;
             var content = new StringContent(JsonSerializer.Serialize(payload, _json), Encoding.UTF8, "application/json");
             var response = http.PutAsync(BaseUrl + path, content).GetAwaiter().GetResult();
             var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -448,7 +526,7 @@ public class BeeperApiService : IDisposable
         return Task.Run(() =>
         {
             Log($"DELETE {path}");
-            using var http = MakeClient();
+            var http = _http;
             var response = http.DeleteAsync(BaseUrl + path).GetAwaiter().GetResult();
             var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
@@ -562,6 +640,7 @@ public class BeeperChat
     [JsonPropertyName("localChatID")] public string? LocalChatId { get; set; }
     [JsonPropertyName("accountID")] public string AccountId { get; set; } = "";
     [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("avatarURL")] public string? AvatarUrl { get; set; }
     [JsonPropertyName("type")] public string? Type { get; set; }
     [JsonPropertyName("participants")] public PaginatedUsers? Participants { get; set; }
     [JsonPropertyName("lastActivity")] public string? LastActivity { get; set; }
@@ -624,7 +703,6 @@ public class MessagesResponse
     [JsonPropertyName("hasMore")] public bool HasMore { get; set; }
     [JsonPropertyName("oldestCursor")] public string? OldestCursor { get; set; }
     [JsonPropertyName("newestCursor")] public string? NewestCursor { get; set; }
-    // Fallback to last item's sortKey when server doesn't return oldestCursor
     public string? Cursor => OldestCursor ?? Messages?.LastOrDefault()?.SortKey;
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
@@ -686,7 +764,6 @@ public class BeeperReaction
     [JsonPropertyName("emoji")] public JsonElement? Emoji { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 
-    // reactionKey is the actual emoji string; Emoji field can be bool or string
     public string DisplayEmoji => ReactionKey ?? (Emoji?.ValueKind == JsonValueKind.String ? Emoji.Value.GetString() : null) ?? "?";
 }
 
@@ -817,5 +894,70 @@ public class AccountsResponse
 {
     [JsonPropertyName("items")] public List<BeeperAccount>? Items { get; set; }
     [JsonPropertyName("accounts")] public List<BeeperAccount>? Accounts { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class AuthLoginResponse
+{
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class AuthVerifyResponse
+{
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("userID")] public string? UserID { get; set; }
+    [JsonPropertyName("accessToken")] public string? AccessToken { get; set; }
+    [JsonPropertyName("homeserverURL")] public string? HomeserverURL { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class AuthStatusResponse
+{
+    [JsonPropertyName("loggedIn")] public bool LoggedIn { get; set; }
+    [JsonPropertyName("userID")] public string? UserID { get; set; }
+    [JsonPropertyName("homeserver")] public string? Homeserver { get; set; }
+    [JsonPropertyName("roomCount")] public int RoomCount { get; set; }
+    [JsonPropertyName("accountCount")] public int AccountCount { get; set; }
+    [JsonPropertyName("displayName")] public string? DisplayName { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class RecoveryKeyResponse
+{
+    [JsonPropertyName("success")] public bool Success { get; set; }
+    [JsonPropertyName("keysImported")] public int KeysImported { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class VerificationStartResponse
+{
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("txnID")] public string? TxnID { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class VerificationStatusResponse
+{
+    [JsonPropertyName("active")] public bool Active { get; set; }
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("txnID")] public string? TxnID { get; set; }
+    [JsonPropertyName("emojis")] public List<SASEmojiItem>? Emojis { get; set; }
+    [JsonPropertyName("decimals")] public List<int>? Decimals { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class SASEmojiItem
+{
+    [JsonPropertyName("emoji")] public string? Emoji { get; set; }
+    [JsonPropertyName("description")] public string? Description { get; set; }
+}
+
+public class VerificationConfirmResponse
+{
+    [JsonPropertyName("status")] public string? Status { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }

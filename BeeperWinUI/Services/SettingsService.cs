@@ -15,6 +15,9 @@ public class SettingsService
     private const string KeyTheme = "theme";
     private const string KeyNotifications = "notifications_enabled";
     private const string KeyGifApiKey = "gif_api_key";
+    private const string KeyConnectionMode = "connection_mode";
+    private const string KeySidecarPort = "sidecar_port";
+    private const string KeyBeeperEmail = "beeper_email";
 
     public SettingsService()
     {
@@ -71,6 +74,30 @@ public class SettingsService
         get => GetString(KeyNotifications) == "true";
         set => SetString(KeyNotifications, value ? "true" : "false");
     }
+
+    public string ConnectionMode
+    {
+        get => GetString(KeyConnectionMode) ?? "sidecar";
+        set => SetString(KeyConnectionMode, value);
+    }
+
+    public bool IsSidecarMode => ConnectionMode == "sidecar";
+
+    public int SidecarPort
+    {
+        get => int.TryParse(GetString(KeySidecarPort), out var p) ? p : 29110;
+        set => SetString(KeySidecarPort, value.ToString());
+    }
+
+    public string? BeeperEmail
+    {
+        get => GetString(KeyBeeperEmail);
+        set => SetString(KeyBeeperEmail, value);
+    }
+
+    public string BaseUrl => IsSidecarMode
+        ? $"http://localhost:{SidecarPort}"
+        : "http://localhost:23373";
 
     public string Theme
     {

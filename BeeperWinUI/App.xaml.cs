@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -14,6 +15,7 @@ public partial class App : Application
 {
     private Window? _window;
     private Frame? _rootFrame;
+    private static Process? _sidecarProcess;
 
     public static BeeperApiService Api { get; } = new();
     public static SettingsService Settings { get; } = new();
@@ -25,10 +27,11 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new Window { Title = "Beeper" };
+        BeeperApiService.SetBaseUrl(Settings.BaseUrl);
+
+        _window = new Window { Title = "Unofficial Beeper WinUI Client" };
         MainWindow = _window;
 
-        // Mica backdrop with DesktopAcrylic fallback
         try
         {
             _window.SystemBackdrop = new MicaBackdrop { Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt };
@@ -38,7 +41,6 @@ public partial class App : Application
             try { _window.SystemBackdrop = new DesktopAcrylicBackdrop(); } catch { }
         }
 
-        // Extended title bar
         _window.ExtendsContentIntoTitleBar = true;
         try
         {
@@ -50,7 +52,6 @@ public partial class App : Application
         }
         catch { }
 
-        // Window sizing
         try
         {
             var hwnd = WindowNative.GetWindowHandle(_window);
@@ -59,22 +60,21 @@ public partial class App : Application
         }
         catch { }
 
-        // Root frame for page navigation
         _rootFrame = new Frame();
         RootFrame = _rootFrame;
 
-        // Wrap frame in a Grid with title bar drag region to prevent resize glitches
         var rootGrid = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)) };
         rootGrid.Children.Add(_rootFrame);
         _window.Content = rootGrid;
 
-        // App-level keyboard shortcuts
         _window.Content.KeyDown += OnGlobalKeyDown;
 
         _window.Activated += (s, e) =>
         {
             IsWindowFocused = e.WindowActivationState != WindowActivationState.Deactivated;
         };
+
+        _window.Closed += (s, e) => StopSidecar();
 
         try { AppNotificationManager.Default.Register(); } catch { }
 
@@ -99,6 +99,152 @@ public partial class App : Application
         ShowSetup();
     }
 
+    public static string? FindSidecarPath()
+    {
+        var appDir = AppContext.BaseDirectory;
+        var candidate = Path.Combine(appDir, "beeper-sidecar.exe");
+        if (File.Exists(candidate)) return candidate;
+
+        var projectRoot = Path.GetFullPath(Path.Combine(appDir, "..", "..", "..", ".."));
+        candidate = Path.Combine(projectRoot, "sidecar", "beeper-sidecar.exe");
+        if (File.Exists(candidate)) return candidate;
+
+        var dir = appDir;
+        for (int i = 0; i < 6; i++)
+        {
+            candidate = Path.Combine(dir, "sidecar", "beeper-sidecar.exe");
+            if (File.Exists(candidate)) return candidate;
+            var parent = Directory.GetParent(dir);
+            if (parent == null) break;
+            dir = parent.FullName;
+        }
+
+        return null;
+    }
+
+    public static bool StartSidecar(int port = 29110)
+    {
+        if (_sidecarProcess != null && !_sidecarProcess.HasExited)
+            return true;
+
+        try
+        {
+            using var probe = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMilliseconds(200) };
+            var resp = probe.GetStringAsync($"http://localhost:{port}/v1/info").GetAwaiter().GetResult();
+            if (resp.Contains("BeeperSidecar"))
+            {
+                AppLog.Write($"[Sidecar] Reusing existing sidecar on port {port}");
+                BeeperApiService.SetBaseUrl($"http://localhost:{port}");
+                return true;
+            }
+        }
+        catch { }
+
+        KillOrphanedSidecars();
+
+        var exePath = FindSidecarPath();
+        if (exePath == null)
+        {
+            AppLog.Write("[Sidecar] beeper-sidecar.exe not found");
+            return false;
+        }
+
+        for (int p = port; p < port + 5; p++)
+        {
+            try
+            {
+                using (var test = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, p))
+                {
+                    test.Start();
+                    test.Stop();
+                }
+
+                AppLog.Write($"[Sidecar] Starting: {exePath} --port {p}");
+                _sidecarProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = exePath,
+                        Arguments = $"--port {p}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    },
+                    EnableRaisingEvents = true
+                };
+                _sidecarProcess.OutputDataReceived += (s, e) =>
+                {
+                    if (e.Data != null) AppLog.Write($"[Sidecar] {e.Data}");
+                };
+                _sidecarProcess.ErrorDataReceived += (s, e) =>
+                {
+                    if (e.Data != null) AppLog.Write($"[Sidecar] {e.Data}");
+                };
+                _sidecarProcess.Start();
+                _sidecarProcess.BeginOutputReadLine();
+                _sidecarProcess.BeginErrorReadLine();
+                AppLog.Write($"[Sidecar] Started (PID {_sidecarProcess.Id}) on port {p}");
+
+                Settings.SidecarPort = p;
+                BeeperApiService.SetBaseUrl($"http://localhost:{p}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"[Sidecar] Port {p} unavailable: {ex.Message}");
+            }
+        }
+
+        AppLog.Write("[Sidecar] Failed to start on any port (29110-29114)");
+        return false;
+    }
+
+    public static void StopSidecar()
+    {
+        if (_sidecarProcess == null) return;
+        try
+        {
+            if (!_sidecarProcess.HasExited)
+            {
+                AppLog.Write($"[Sidecar] Stopping (PID {_sidecarProcess.Id})...");
+                _sidecarProcess.Kill(entireProcessTree: true);
+                _sidecarProcess.WaitForExit(3000);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Sidecar] Error stopping: {ex.Message}");
+        }
+        finally
+        {
+            _sidecarProcess.Dispose();
+            _sidecarProcess = null;
+        }
+    }
+
+    private static void KillOrphanedSidecars()
+    {
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("beeper-sidecar"))
+            {
+                try
+                {
+                    AppLog.Write($"[Sidecar] Killing orphaned process PID {proc.Id}");
+                    proc.Kill(entireProcessTree: true);
+                    proc.WaitForExit(2000);
+                }
+                catch { }
+                finally { proc.Dispose(); }
+            }
+        }
+        catch { }
+    }
+
+    public static bool IsSidecarRunning =>
+        _sidecarProcess != null && !_sidecarProcess.HasExited;
+
     private void OnGlobalKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         var ctrl = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(
@@ -108,24 +254,21 @@ public partial class App : Application
 
         if (ctrl && !shift && e.Key == Windows.System.VirtualKey.K)
         {
-            // Ctrl+K: focus search / quick chat switcher
             e.Handled = true;
             ShellPage.FocusSearch?.Invoke();
         }
         else if (ctrl && shift && e.Key == Windows.System.VirtualKey.N)
         {
-            // Ctrl+Shift+N: new chat dialog
             e.Handled = true;
             ShellPage.OpenNewChat?.Invoke();
         }
-        else if (ctrl && !shift && e.Key == (Windows.System.VirtualKey)192) // Ctrl+` (backtick)
+        else if (ctrl && !shift && e.Key == (Windows.System.VirtualKey)192)
         {
             e.Handled = true;
             ShellPage.OpenTerminal?.Invoke();
         }
         else if (e.Key == Windows.System.VirtualKey.Escape)
         {
-            // Escape: close overlays
             e.Handled = true;
             ShellPage.CloseOverlays?.Invoke();
         }
