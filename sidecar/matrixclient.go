@@ -1420,11 +1420,17 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 			token := room.TimelineEnd
 			room.mu.RUnlock()
 
+			// try in-memory timeline first
 			if len(timeline) > 0 {
 				if len(timeline) > limit {
 					timeline = timeline[len(timeline)-limit:]
 				}
 				return timeline, token != "", token, nil
+			}
+
+			dbMsgs := mc.store.GetMessagesFromDB(roomID, limit)
+			if len(dbMsgs) > 0 {
+				return dbMsgs, true, "", nil
 			}
 		}
 	}
@@ -1489,6 +1495,10 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 	}
 
 	hasMore := resp.End != ""
+
+	for _, msg := range messages {
+		mc.store.SaveMessage(msg)
+	}
 
 	if from == "" && direction != 'f' && len(messages) > 0 {
 		room := mc.store.EnsureRoom(roomID)
