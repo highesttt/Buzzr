@@ -244,6 +244,7 @@ public sealed partial class ChatListControl : UserControl
         };
 
         RenderChats(filtered.ToList());
+        UpdateUnreadBadge();
     }
 
     private async Task OnSearchChangedAsync()
@@ -656,7 +657,10 @@ public sealed partial class ChatListControl : UserControl
         _selectedChatId = chat.Id;
         bool hadUnread = chat.UnreadCount > 0;
         if (hadUnread)
+        {
             chat.UnreadCount = 0;
+            UpdateUnreadBadge();
+        }
 
         foreach (var child in ListStack.Children)
         {
@@ -1118,23 +1122,22 @@ public sealed partial class ChatListControl : UserControl
             {
                 var bmp = GetCachedBitmap(user.ImgUrl, (int)size);
                 if (bmp == null) throw new Exception("no cache");
-                var img = new Image { Source = bmp, Width = size, Height = size, Stretch = Stretch.UniformToFill };
-                return new Border
+                var ellipse = new Microsoft.UI.Xaml.Shapes.Ellipse
                 {
                     Width = size,
                     Height = size,
-                    CornerRadius = new CornerRadius(size / 2),
-                    Child = img,
-                    BorderBrush = B(Surface),
-                    BorderThickness = new Thickness(2)
+                    Fill = new ImageBrush { ImageSource = bmp, Stretch = Stretch.UniformToFill },
+                    Stroke = B(Surface),
+                    StrokeThickness = 1.5
                 };
+                return ellipse;
             }
             catch { }
         }
         var name = user.FullName ?? user.DisplayText ?? user.Username ?? "?";
         var av = Avatar(name, size);
         av.BorderBrush = B(Surface);
-        av.BorderThickness = new Thickness(2);
+        av.BorderThickness = new Thickness(1.5);
         return av;
     }
 
@@ -1439,17 +1442,74 @@ public sealed partial class ChatListControl : UserControl
             var isChatOpen = chatId == _selectedChatId && App.IsWindowFocused;
             if (isChatOpen) return;
 
+            var chat = _allChats.FirstOrDefault(c => c.Id == chatId);
+            var chatName = chat?.Title ?? "";
             var sender = msgEl.TryGetProperty("senderName", out var snProp) ? snProp.GetString() ?? "Unknown" : "Unknown";
             var preview = msgEl.TryGetProperty("text", out var tProp) ? tProp.GetString() ?? "" : "";
             if (preview.Length > 100) preview = preview[..100] + "...";
             if (string.IsNullOrEmpty(preview)) preview = "(attachment)";
 
+            // Show chat name + sender for groups, just sender for DMs
+            var title = !string.IsNullOrEmpty(chatName) && chatName != sender
+                ? $"{chatName} — {sender}"
+                : sender;
+
             var builder = new AppNotificationBuilder()
-                .AddText(sender)
+                .AddText(title)
                 .AddText(preview);
             AppNotificationManager.Default.Show(builder.BuildNotification());
+
+            // Update window title with unread count and flash taskbar
+            UpdateUnreadBadge();
+            FlashTaskbar();
         }
         catch { }
+    }
+
+    public void UpdateUnreadBadge()
+    {
+        try
+        {
+            var totalUnread = _allChats.Sum(c => c.UnreadCount);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (App.MainWindow != null)
+                    App.MainWindow.Title = totalUnread > 0 ? $"Buzzr ({totalUnread})" : "Buzzr";
+            });
+        }
+        catch { }
+    }
+
+    private static void FlashTaskbar()
+    {
+        try
+        {
+            if (App.IsWindowFocused || App.MainWindow == null) return;
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+            var info = new FLASHWINFO
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<FLASHWINFO>(),
+                hwnd = hwnd,
+                dwFlags = 0x03, // FLASHW_ALL (flash caption + taskbar)
+                uCount = 3,
+                dwTimeout = 0
+            };
+            FlashWindowEx(ref info);
+        }
+        catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public nint hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
     }
 
     public async Task RefreshChat(string chatId)

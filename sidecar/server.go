@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -787,7 +788,39 @@ func (s *Server) handleUploadBase64(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "Base64 upload not yet implemented")
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "No content provided")
+		return
+	}
+
+	data, err := base64.StdEncoding.DecodeString(req.Content)
+	if err != nil {
+		// Try with padding stripped (common in URLs)
+		data, err = base64.RawStdEncoding.DecodeString(req.Content)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid base64: "+err.Error())
+			return
+		}
+	}
+
+	fileName := req.FileName
+	if fileName == "" {
+		fileName = "upload"
+	}
+	mimeType := req.MimeType
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	uploadID, err := s.mc.UploadMedia(r.Context(), data, fileName, mimeType)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "UPLOAD_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, APIUploadResponse{
+		UploadID: uploadID,
+	})
 }
 
 func (s *Server) handleDownloadAsset(w http.ResponseWriter, r *http.Request) {

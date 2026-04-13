@@ -23,6 +23,7 @@ public sealed partial class SettingsPage : Page
         SignOutBtn.Click += (s, e) => ((App)Application.Current).Disconnect();
         ClearCacheBtn.Click += (s, e) => { ChatListControl.ClearAllCaches(); RefreshStorageStats(); };
         StartupToggle.Toggled += (s, e) => SetStartupEnabled(StartupToggle.IsOn);
+        NotificationsToggle.Toggled += (s, e) => App.Settings.NotificationsEnabled = NotificationsToggle.IsOn;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -33,6 +34,7 @@ public sealed partial class SettingsPage : Page
         LoadProfile();
         RefreshStorageStats();
         StartupToggle.IsOn = App.Settings.GetString("open_on_startup") == "true";
+        NotificationsToggle.IsOn = App.Settings.NotificationsEnabled;
     }
 
     private void BackBtn_Click(object sender, RoutedEventArgs e)

@@ -71,7 +71,7 @@ public class SettingsService
 
     public bool NotificationsEnabled
     {
-        get => GetString(KeyNotifications) == "true";
+        get => GetString(KeyNotifications) != "false";
         set => SetString(KeyNotifications, value ? "true" : "false");
     }
 
