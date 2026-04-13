@@ -948,7 +948,13 @@ public sealed partial class ChatListControl : UserControl
                 container.Children.Add(avatar);
             }
 
-            return container;
+            return new Border
+            {
+                Width = size,
+                Height = size,
+                CornerRadius = new CornerRadius(size / 2),
+                Child = container
+            };
         }
 
         if (chat.Type == "group")

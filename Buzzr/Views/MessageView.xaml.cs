@@ -34,6 +34,7 @@ public sealed partial class MessageView : UserControl
     private CancellationTokenSource? _loadChatCts;
 
     private static readonly ConcurrentDictionary<string, string> _resolvedUrlCache = new();
+    private readonly ConcurrentDictionary<string, BeeperMessage> _replyCache = new();
 
     private Flyout? _gifFlyout;
     private CancellationTokenSource? _gifSearchCts;
@@ -172,6 +173,7 @@ public sealed partial class MessageView : UserControl
 
             _allMessages.Add(msg);
             _messageMap[msg.Id] = msg;
+            _replyCache[msg.Id] = msg;
 
             var lastSender = _allMessages.Count > 1 ? _allMessages[^2].SenderId : null;
             var lastTs = _allMessages.Count > 1 ? _allMessages[^2].Timestamp : null;
@@ -318,6 +320,7 @@ public sealed partial class MessageView : UserControl
         LoadingRing.IsActive = true;
         LoadingRing.Visibility = Visibility.Visible;
 
+        StopAllMediaPlayers();
         MsgStack.Children.Clear();
         _stagedAttachments.Clear();
         AttachmentPreview.Visibility = Visibility.Collapsed;
@@ -363,7 +366,10 @@ public sealed partial class MessageView : UserControl
 
         _messageMap.Clear();
         foreach (var m in _allMessages)
+        {
             _messageMap[m.Id] = m;
+            _replyCache[m.Id] = m;
+        }
 
         RenderMessages(_allMessages);
         ScrollToBottom();
@@ -402,7 +408,10 @@ public sealed partial class MessageView : UserControl
 
                 _allMessages.InsertRange(0, response.Messages);
                 foreach (var m in response.Messages)
+                {
                     _messageMap[m.Id] = m;
+                    _replyCache[m.Id] = m;
+                }
 
                 var olderByTime = response.Messages
                     .Where(m => m.Type != "REACTION")
@@ -573,7 +582,7 @@ public sealed partial class MessageView : UserControl
                 content.Children.Add(BuildAttachment(att, isOwn));
         }
 
-        var text = m.Text;
+        var text = StripSenderPrefix(m.Text, m);
         if (!string.IsNullOrEmpty(text))
         {
             var tb = new TextBlock
@@ -726,6 +735,10 @@ public sealed partial class MessageView : UserControl
             var editItem = new MenuFlyoutItem { Text = "Edit", Icon = new FontIcon { Glyph = "\uE70F" } };
             editItem.Click += (s, e) => StartEdit(m);
             flyout.Items.Add(editItem);
+
+            var deleteItem = new MenuFlyoutItem { Text = "Delete", Icon = new FontIcon { Glyph = "\uE74D" } };
+            deleteItem.Click += (s, e) => _ = DeleteMessageAsync(m);
+            flyout.Items.Add(deleteItem);
         }
 
         return flyout;
@@ -805,19 +818,27 @@ public sealed partial class MessageView : UserControl
     {
         string replyText = "...";
         string replySender = "";
-        if (_messageMap.TryGetValue(linkedMessageId, out var replyMsg))
+
+        BeeperMessage? replyMsg = null;
+        if (!_messageMap.TryGetValue(linkedMessageId, out replyMsg))
+            _replyCache.TryGetValue(linkedMessageId, out replyMsg);
+
+        if (replyMsg != null)
         {
-            replyText = replyMsg.Text ?? $"[{replyMsg.Type}]";
+            replyText = StripSenderPrefix(replyMsg.Text, replyMsg) ?? $"[{replyMsg.Type}]";
             if (replyText.Length > 80) replyText = replyText[..80] + "...";
             replySender = replyMsg.SenderName ?? replyMsg.SenderId;
         }
 
         var replyStack = new StackPanel { Spacing = 1 };
-        if (!string.IsNullOrEmpty(replySender))
-            replyStack.Children.Add(Lbl(replySender, 10, Accent, true));
-        replyStack.Children.Add(Lbl(replyText, 11, isOwn ? SentFg : Fg2, maxLines: 2));
+        var senderLabel = Lbl(replySender, 10, Accent, true);
+        var textLabel = Lbl(replyText, 11, isOwn ? SentFg : Fg2, maxLines: 2);
 
-        return new Border
+        if (!string.IsNullOrEmpty(replySender))
+            replyStack.Children.Add(senderLabel);
+        replyStack.Children.Add(textLabel);
+
+        var replyBorder = new Border
         {
             BorderBrush = B(Accent),
             BorderThickness = new Thickness(2, 0, 0, 0),
@@ -827,6 +848,20 @@ public sealed partial class MessageView : UserControl
             CornerRadius = new CornerRadius(0, 4, 4, 0),
             Child = replyStack
         };
+
+        if (replyMsg == null && _chatId != null)
+        {
+            _ = FetchAndUpdateReplyAsync(linkedMessageId, senderLabel, textLabel, isOwn);
+        }
+
+        var capturedId = linkedMessageId;
+        replyBorder.PointerPressed += (s, e) =>
+        {
+            if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+            _ = ScrollToMessageAsync(capturedId);
+        };
+
+        return replyBorder;
     }
 
     private FrameworkElement BuildAttachment(BeeperAttachment att, bool isOwn)
@@ -868,19 +903,93 @@ public sealed partial class MessageView : UserControl
 
         if (mimeType.StartsWith("video/") || attType == "VIDEO")
         {
-            var videoStack = new StackPanel { Spacing = 4 };
-            videoStack.Children.Add(new FontIcon { Glyph = "\uE714", FontSize = 24, Foreground = B(isOwn ? SentFg : Fg2) });
-            videoStack.Children.Add(Lbl(att.FileName ?? "Video", 12, isOwn ? SentFg : Fg2, maxLines: 1));
-            if (att.FileSize.HasValue)
-                videoStack.Children.Add(Lbl(FormatFileSize(att.FileSize.Value), 10, isOwn ? SentFg : Fg3));
-            return new Border
+            var srcUrl = att.SrcURL;
+            if (string.IsNullOrEmpty(srcUrl))
             {
-                Background = B(isOwn ? AccentDark : Surface),
+                var stubStack = new StackPanel { Spacing = 4 };
+                stubStack.Children.Add(new FontIcon { Glyph = "\uE714", FontSize = 24, Foreground = B(isOwn ? SentFg : Fg2) });
+                stubStack.Children.Add(Lbl(att.FileName ?? "Video", 12, isOwn ? SentFg : Fg2, maxLines: 1));
+                if (att.FileSize.HasValue)
+                    stubStack.Children.Add(Lbl(FormatFileSize(att.FileSize.Value), 10, isOwn ? SentFg : Fg3));
+                return new Border
+                {
+                    Background = B(isOwn ? AccentDark : Surface),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12, 8, 12, 8),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    Child = stubStack
+                };
+            }
+
+            var vw = att.GetWidth();
+            var vh = att.GetHeight();
+            int vmaxW = 300, vmaxH = 250;
+            if (vw > 0 && vh > 0)
+            {
+                var ratio = Math.Min((double)vmaxW / vw, (double)vmaxH / vh);
+                if (ratio < 1) { vw = (int)(vw * ratio); vh = (int)(vh * ratio); }
+            }
+            else { vw = 280; vh = 200; }
+
+            var videoContainer = new Border
+            {
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12, 8, 12, 8),
                 Margin = new Thickness(0, 2, 0, 2),
-                Child = videoStack
+                Width = vw,
+                Height = vh,
+                Background = B(isOwn ? AccentDark : Surface)
             };
+
+            var playOverlay = new Grid { Width = vw, Height = vh };
+
+            var loadRing = new ProgressRing
+            {
+                IsActive = false, Width = 24, Height = 24,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var playBtn = new Button
+            {
+                Width = 48, Height = 48,
+                CornerRadius = new CornerRadius(24),
+                Background = B(Windows.UI.Color.FromArgb(180, 0, 0, 0)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Padding = new Thickness(0),
+                BorderThickness = new Thickness(0),
+                Content = new FontIcon
+                {
+                    Glyph = "\uE768",
+                    FontSize = 20,
+                    Foreground = B(Windows.UI.Color.FromArgb(255, 255, 255, 255))
+                }
+            };
+
+            var infoRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            infoRow.Children.Add(new FontIcon { Glyph = "\uE714", FontSize = 12, Foreground = B(Windows.UI.Color.FromArgb(255, 255, 255, 255)) });
+            var videoLabel = att.FileName ?? "Video";
+            if (att.FileSize.HasValue)
+                videoLabel += $" ({FormatFileSize(att.FileSize.Value)})";
+            infoRow.Children.Add(Lbl(videoLabel, 10, Windows.UI.Color.FromArgb(255, 255, 255, 255), maxLines: 1));
+
+            playOverlay.Children.Add(loadRing);
+            playOverlay.Children.Add(playBtn);
+            playOverlay.Children.Add(infoRow);
+            videoContainer.Child = playOverlay;
+
+            var capturedSrcUrl = srcUrl;
+            var capturedW = vw;
+            var capturedH = vh;
+            playBtn.Click += (s, e) => _ = PlayVideoAsync(videoContainer, capturedSrcUrl, capturedW, capturedH, loadRing, playBtn);
+
+            return videoContainer;
         }
 
         var fileRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -1061,6 +1170,211 @@ public sealed partial class MessageView : UserControl
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
         return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
+    }
+
+    private string? StripSenderPrefix(string? text, BeeperMessage m)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(m.SenderName)) candidates.Add(m.SenderName);
+        if (!string.IsNullOrEmpty(m.SenderId)) candidates.Add(m.SenderId);
+
+        if (_participantMap.TryGetValue(m.SenderId, out var user))
+        {
+            if (!string.IsNullOrEmpty(user.FullName)) candidates.Add(user.FullName);
+            if (!string.IsNullOrEmpty(user.Username)) candidates.Add(user.Username);
+            if (!string.IsNullOrEmpty(user.DisplayText)) candidates.Add(user.DisplayText);
+        }
+
+        foreach (var name in candidates)
+        {
+            if (text.StartsWith(name + ": ", StringComparison.OrdinalIgnoreCase))
+                return text[(name.Length + 2)..];
+        }
+
+        return text;
+    }
+
+    private async Task PlayVideoAsync(Border container, string srcUrl, int width, int height,
+        ProgressRing loadRing, Button playBtn)
+    {
+        playBtn.Visibility = Visibility.Collapsed;
+        loadRing.IsActive = true;
+
+        try
+        {
+            var resolvedUrl = await ResolveAssetUrlAsync(srcUrl);
+            if (string.IsNullOrEmpty(resolvedUrl))
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    playBtn.Visibility = Visibility.Visible;
+                    loadRing.IsActive = false;
+                });
+                return;
+            }
+
+            var capturedUrl = resolvedUrl;
+            var capturedW = width;
+            var capturedH = height;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                loadRing.IsActive = false;
+
+                var mediaPlayer = new Windows.Media.Playback.MediaPlayer();
+                mediaPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(capturedUrl));
+
+                var playerElement = new MediaPlayerElement
+                {
+                    Width = capturedW,
+                    Height = capturedH,
+                    AreTransportControlsEnabled = true,
+                    Stretch = Stretch.Uniform
+                };
+                playerElement.TransportControls = new MediaTransportControls
+                {
+                    IsCompact = true,
+                    IsZoomButtonVisible = false,
+                    IsZoomEnabled = false
+                };
+                playerElement.SetMediaPlayer(mediaPlayer);
+
+                container.Child = playerElement;
+                mediaPlayer.Play();
+            });
+        }
+        catch
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                playBtn.Visibility = Visibility.Visible;
+                loadRing.IsActive = false;
+            });
+        }
+    }
+
+    private void StopAllMediaPlayers()
+    {
+        foreach (var child in MsgStack.Children)
+        {
+            Border? border = child as Border;
+            if (border == null && child is Grid g)
+            {
+                foreach (var gc in g.Children)
+                {
+                    if (gc is Border b) border = b;
+                }
+            }
+            if (border?.Child is MediaPlayerElement mpe)
+            {
+                try
+                {
+                    mpe.MediaPlayer?.Pause();
+                    mpe.MediaPlayer?.Dispose();
+                    mpe.SetMediaPlayer(null);
+                }
+                catch { }
+            }
+        }
+    }
+
+    private async Task FetchAndUpdateReplyAsync(string messageId, TextBlock senderLabel, TextBlock textLabel, bool isOwn)
+    {
+        if (_chatId == null) return;
+        var chatId = _chatId;
+
+        try
+        {
+            var cursor = _msgCursor;
+            for (int page = 0; page < 5 && !string.IsNullOrEmpty(cursor); page++)
+            {
+                var cursorCopy = cursor;
+                var response = await Task.Run(async () =>
+                    await App.Api.GetMessagesAsync(chatId, cursor: cursorCopy, direction: "before"));
+
+                if (response?.Messages == null || response.Messages.Count == 0) break;
+
+                foreach (var m in response.Messages)
+                    _replyCache[m.Id] = m;
+
+                var found = response.Messages.FirstOrDefault(m => m.Id == messageId);
+                if (found != null)
+                {
+                    if (chatId != _chatId) return;
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        var text = StripSenderPrefix(found.Text, found) ?? $"[{found.Type}]";
+                        if (text.Length > 80) text = text[..80] + "...";
+                        textLabel.Text = text;
+                        senderLabel.Text = found.SenderName ?? found.SenderId;
+                    });
+                    return;
+                }
+
+                cursor = response.OldestCursor ?? response.Cursor;
+            }
+        }
+        catch { }
+    }
+
+    private async Task ScrollToMessageAsync(string messageId)
+    {
+        for (int i = 0; i < MsgStack.Children.Count; i++)
+        {
+            if (MsgStack.Children[i] is FrameworkElement el && el.Tag as string == messageId)
+            {
+                el.StartBringIntoView(new BringIntoViewOptions
+                {
+                    AnimationDesired = true,
+                    VerticalAlignmentRatio = 0.3
+                });
+                FlashHighlight(el);
+                return;
+            }
+        }
+
+        for (int attempt = 0; attempt < 10 && _msgHasMore; attempt++)
+        {
+            await LoadEarlierMessagesAsync();
+
+            for (int i = 0; i < MsgStack.Children.Count; i++)
+            {
+                if (MsgStack.Children[i] is FrameworkElement el && el.Tag as string == messageId)
+                {
+                    el.StartBringIntoView(new BringIntoViewOptions
+                    {
+                        AnimationDesired = true,
+                        VerticalAlignmentRatio = 0.3
+                    });
+                    FlashHighlight(el);
+                    return;
+                }
+            }
+        }
+    }
+
+    private void FlashHighlight(FrameworkElement el)
+    {
+        if (el is Grid grid && grid.ColumnDefinitions.Count > 0)
+        {
+            var highlight = new Border
+            {
+                Background = B(Windows.UI.Color.FromArgb(40, 76, 194, 255)),
+                CornerRadius = new CornerRadius(12),
+                IsHitTestVisible = false
+            };
+            Grid.SetColumnSpan(highlight, grid.ColumnDefinitions.Count);
+            grid.Children.Insert(0, highlight);
+
+            _ = Task.Delay(1500).ContinueWith(_ =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { grid.Children.Remove(highlight); } catch { }
+                });
+            });
+        }
     }
 
     private void ScrollToBottom()
