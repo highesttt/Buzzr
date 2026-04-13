@@ -4,6 +4,59 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     RequestedTheme="Dark">
 
+    <UserControl.Resources>
+        <Style x:Key="NoFlickerButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="PointerOver">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0.8"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Border x:Name="Root"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    Padding="{TemplateBinding Padding}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    BorderBrush="{TemplateBinding BorderBrush}">
+                                <ContentPresenter
+                                    Content="{TemplateBinding Content}"
+                                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                            </Border>
+                            <Border x:Name="HoverOverlay"
+                                    Background="#15FFFFFF"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    Opacity="0" IsHitTestVisible="False"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
     <Grid Background="#1F2021">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -242,5 +295,41 @@
                 </Button>
             </Grid>
         </Border>
+        <!-- Image Viewer Overlay -->
+        <Grid x:Name="ImageOverlay" Grid.RowSpan="7"
+              Visibility="Collapsed" Opacity="0">
+            <Grid.Background>
+                <SolidColorBrush Color="#000000" Opacity="0.9"/>
+            </Grid.Background>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Button x:Name="ImageOverlayClose" Grid.Row="0"
+                    HorizontalAlignment="Right" Margin="16,48,16,0"
+                    Width="36" Height="36" Padding="0"
+                    Background="#40FFFFFF" BorderThickness="0" CornerRadius="18"
+                    ToolTipService.ToolTip="Close (Esc)">
+                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="White"/>
+            </Button>
+
+            <ScrollViewer x:Name="ImageOverlayScroll" Grid.Row="1"
+                          ZoomMode="Enabled"
+                          MinZoomFactor="1" MaxZoomFactor="10"
+                          HorizontalScrollMode="Enabled" VerticalScrollMode="Enabled"
+                          HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollBarVisibility="Hidden"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ManipulationMode="All">
+                <Grid x:Name="ImageOverlayContainer"
+                      HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image x:Name="ImageOverlayImg"
+                           Stretch="Uniform"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
     </Grid>
 </UserControl>

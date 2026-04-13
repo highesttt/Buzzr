@@ -1260,6 +1260,10 @@ func (mc *MatrixClient) contentToAttachment(content *event.MessageEventContent, 
 		att.ID = string(content.File.URL)
 		if fileJSON, err := json.Marshal(content.File); err == nil {
 			att.EncryptedFileJSON = string(fileJSON)
+			// Persist encryption info so /v1/assets/serve can decrypt
+			if mc.store != nil {
+				mc.store.SaveEncryptedFile(string(content.File.URL), string(fileJSON))
+			}
 		}
 	} else if content.URL != "" {
 		att.SrcURL = string(content.URL)

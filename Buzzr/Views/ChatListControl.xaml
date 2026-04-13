@@ -4,6 +4,62 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     RequestedTheme="Dark">
 
+    <UserControl.Resources>
+        <Style x:Key="NoFlickerButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#A1A1A1"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,0,10,0"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="PointerOver">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0.8"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Border x:Name="Root"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    Padding="{TemplateBinding Padding}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    BorderBrush="{TemplateBinding BorderBrush}">
+                                <ContentPresenter
+                                    Content="{TemplateBinding Content}"
+                                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                            </Border>
+                            <Border x:Name="HoverOverlay"
+                                    Background="#15FFFFFF"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    Opacity="0" IsHitTestVisible="False"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
     <Grid Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -36,21 +92,16 @@
         <!-- Tab filters -->
         <StackPanel x:Name="TabBar" Grid.Row="2" Orientation="Horizontal"
                     Spacing="0" Margin="8,4,8,8">
-            <Button x:Name="TabAll" Content="All" FontSize="12" Height="28"
-                    Padding="10,0,10,0" Background="#2D2D2D" Foreground="#F3F3F3"
-                    CornerRadius="4,0,0,4" BorderThickness="0"/>
-            <Button x:Name="TabUnread" Content="Unread" FontSize="12" Height="28"
-                    Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
-                    CornerRadius="0" BorderThickness="0"/>
-            <Button x:Name="TabPinned" Content="Pinned" FontSize="12" Height="28"
-                    Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
-                    CornerRadius="0" BorderThickness="0"/>
-            <Button x:Name="TabArchived" Content="Archived" FontSize="12" Height="28"
-                    Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
-                    CornerRadius="0" BorderThickness="0"/>
-            <Button x:Name="TabLowPriority" Content="Low Priority" FontSize="12" Height="28"
-                    Padding="10,0,10,0" Background="Transparent" Foreground="#A1A1A1"
-                    CornerRadius="0,4,4,0" BorderThickness="0"/>
+            <Button x:Name="TabAll" Content="All" Style="{StaticResource NoFlickerButton}"
+                    Background="#2D2D2D" Foreground="#F3F3F3" CornerRadius="4,0,0,4"/>
+            <Button x:Name="TabUnread" Content="Unread" Style="{StaticResource NoFlickerButton}"
+                    CornerRadius="0"/>
+            <Button x:Name="TabPinned" Content="Pinned" Style="{StaticResource NoFlickerButton}"
+                    CornerRadius="0"/>
+            <Button x:Name="TabArchived" Content="Archived" Style="{StaticResource NoFlickerButton}"
+                    CornerRadius="0"/>
+            <Button x:Name="TabLowPriority" Content="Low Priority" Style="{StaticResource NoFlickerButton}"
+                    CornerRadius="0,4,4,0"/>
         </StackPanel>
 
         <!-- Chat list -->

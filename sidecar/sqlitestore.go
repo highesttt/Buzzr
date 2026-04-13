@@ -95,6 +95,10 @@ func (s *SQLiteStore) createTables() error {
 			network TEXT,
 			user_json TEXT
 		);
+		CREATE TABLE IF NOT EXISTS encrypted_files (
+			mxc_uri TEXT PRIMARY KEY,
+			file_json TEXT
+		);
 		CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_id);
 		CREATE INDEX IF NOT EXISTS idx_members_room ON members(room_id);
 	`)
@@ -491,4 +495,52 @@ func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, li
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
 	return msgs
+}
+
+func (s *SQLiteStore) GetEncryptedFileJSON(mxcURI string) string {
+	if s.db == nil {
+		return ""
+	}
+
+	// Fast lookup from dedicated table
+	var fileJSON sql.NullString
+	err := s.db.QueryRow("SELECT file_json FROM encrypted_files WHERE mxc_uri = ?", mxcURI).Scan(&fileJSON)
+	if err == nil && fileJSON.Valid && fileJSON.String != "" {
+		return fileJSON.String
+	}
+
+	// Fallback: search through message attachments
+	rows, err := s.db.Query("SELECT attachments_json FROM messages WHERE attachments_json LIKE ? LIMIT 50", "%"+mxcURI+"%")
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var attachJSON sql.NullString
+		if err := rows.Scan(&attachJSON); err != nil || !attachJSON.Valid {
+			continue
+		}
+		var attachments []Attachment
+		if err := json.Unmarshal([]byte(attachJSON.String), &attachments); err != nil {
+			continue
+		}
+		for _, att := range attachments {
+			if att.SrcURL == mxcURI && att.EncryptedFileJSON != "" {
+				// Cache it for next time
+				s.SaveEncryptedFile(mxcURI, att.EncryptedFileJSON)
+				return att.EncryptedFileJSON
+			}
+		}
+	}
+	return ""
+}
+
+func (s *SQLiteStore) SaveEncryptedFile(mxcURI, fileJSON string) {
+	if s.db == nil || mxcURI == "" || fileJSON == "" {
+		return
+	}
+	s.writeCh <- func() {
+		s.db.Exec("INSERT OR REPLACE INTO encrypted_files (mxc_uri, file_json) VALUES (?, ?)", mxcURI, fileJSON)
+	}
 }

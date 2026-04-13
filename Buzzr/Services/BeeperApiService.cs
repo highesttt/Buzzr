@@ -587,6 +587,7 @@ public class BeeperAttachment
     [JsonPropertyName("isGif")] public bool IsGif { get; set; }
     [JsonPropertyName("isSticker")] public bool IsSticker { get; set; }
     [JsonPropertyName("isVoiceNote")] public bool IsVoiceNote { get; set; }
+    [JsonPropertyName("duration")] public double? Duration { get; set; }
     [JsonPropertyName("size")] public JsonElement? Size { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 

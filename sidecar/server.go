@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"maunium.net/go/mautrix/event"
 )
 
 var Version = "0.0.2"
@@ -813,10 +814,27 @@ func (s *Server) handleServeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up encryption info for this mxc URI from stored attachments
+	encFileJSON := s.store.GetEncryptedFileJSON(uri)
+
 	data, contentType, err := s.mc.DownloadMedia(r.Context(), uri)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "UNKNOWN_ERROR", err.Error())
 		return
+	}
+
+	// Decrypt if we have encryption info
+	if encFileJSON != "" {
+		var encFile event.EncryptedFileInfo
+		if jsonErr := json.Unmarshal([]byte(encFileJSON), &encFile); jsonErr == nil {
+			if decErr := encFile.DecryptInPlace(data); decErr != nil {
+				log.Warn().Err(decErr).Str("uri", uri).Msg("Failed to decrypt media")
+			} else {
+				log.Debug().Str("uri", uri[:min(len(uri), 60)]).Int("bytes", len(data)).Msg("Decrypted media successfully")
+			}
+		}
+	} else {
+		log.Debug().Str("uri", uri[:min(len(uri), 60)]).Int("bytes", len(data)).Msg("No encryption info found, serving raw")
 	}
 
 	if contentType != "" {

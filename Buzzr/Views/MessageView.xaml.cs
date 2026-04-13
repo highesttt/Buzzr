@@ -137,6 +137,67 @@ public sealed partial class MessageView : UserControl
 
         ScheduleBtn.Click += (s, e) => ShowScheduleFlyout();
 
+        ImageOverlayClose.Click += (s, e) => CloseImageOverlay();
+        // Click anywhere except the image itself to close
+        ImageOverlay.Tapped += (s, e) =>
+        {
+            if (e.OriginalSource is Image) return; // clicked on the image — don't close
+            if (e.OriginalSource is Button) return; // clicked on a button — don't close
+            if (e.OriginalSource is FontIcon) return; // clicked on button icon — don't close
+            CloseImageOverlay();
+        };
+        // Escape to close — handle at the UserControl level since Grid doesn't get key focus
+        this.KeyDown += (s, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Escape && ImageOverlay.Visibility == Visibility.Visible)
+            {
+                CloseImageOverlay();
+                e.Handled = true;
+            }
+        };
+        // Double-tap on image to toggle zoom
+        ImageOverlayImg.DoubleTapped += OnImageOverlayDoubleTapped;
+
+        // Mouse drag to pan when zoomed
+        ImageOverlayContainer.PointerPressed += (s, e) =>
+        {
+            if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+            if (ImageOverlayScroll.ZoomFactor <= 1.05f) return;
+            _imgDragActive = true;
+            _imgDragLast = e.GetCurrentPoint(ImageOverlayScroll).Position;
+            SetOverlayCursor(true);
+            ((UIElement)s).CapturePointer(e.Pointer);
+            e.Handled = true;
+        };
+        ImageOverlayContainer.PointerMoved += (s, e) =>
+        {
+            if (!_imgDragActive) return;
+            var pos = e.GetCurrentPoint(ImageOverlayScroll).Position;
+            var dx = pos.X - _imgDragLast.X;
+            var dy = pos.Y - _imgDragLast.Y;
+            _imgDragLast = pos;
+            ImageOverlayScroll.ChangeView(
+                ImageOverlayScroll.HorizontalOffset - dx,
+                ImageOverlayScroll.VerticalOffset - dy,
+                null, true);
+            e.Handled = true;
+        };
+        ImageOverlayContainer.PointerReleased += (s, e) =>
+        {
+            if (!_imgDragActive) return;
+            _imgDragActive = false;
+            SetOverlayCursor(false);
+            ((UIElement)s).ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+        };
+
+        // Reset cursor when zoom changes (in case drag ended oddly)
+        ImageOverlayScroll.ViewChanged += (s, e) =>
+        {
+            if (!_imgDragActive)
+                SetOverlayCursor(false);
+        };
+
         _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _scheduleTimer.Tick += (s, e) => _ = ProcessScheduledMessagesAsync();
         _scheduleTimer.Start();
@@ -147,6 +208,194 @@ public sealed partial class MessageView : UserControl
         CloseChatSearch();
         CancelEdit();
         CancelReply();
+        CloseImageOverlay();
+    }
+
+    private string? _overlayImageUrl;
+    private bool _imgDragActive;
+    private Windows.Foundation.Point _imgDragLast;
+
+    private void SetOverlayCursor(bool dragging)
+    {
+        ProtectedCursor = dragging
+            ? Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeAll)
+            : null;
+    }
+
+    private void ShowImageOverlay(BitmapImage source, string? imageUrl = null)
+    {
+        _overlayImageUrl = imageUrl;
+
+        // Load full-resolution image (no DecodePixelWidth) for the overlay
+        BitmapImage fullRes;
+        if (source.UriSource != null)
+        {
+            fullRes = new BitmapImage(source.UriSource);
+        }
+        else
+        {
+            fullRes = source;
+        }
+
+        // Size the container to fit the viewport, so zoom 1x = fit-to-screen
+        fullRes.ImageOpened += (s, e) =>
+        {
+            var bmpSrc = s as BitmapImage;
+            if (bmpSrc == null) return;
+            var imgW = bmpSrc.PixelWidth;
+            var imgH = bmpSrc.PixelHeight;
+            if (imgW <= 0 || imgH <= 0) return;
+
+            var viewW = ImageOverlayScroll.ActualWidth - 48;
+            var viewH = ImageOverlayScroll.ActualHeight - 48;
+            if (viewW <= 0 || viewH <= 0) return;
+
+            var scale = Math.Min(viewW / imgW, viewH / imgH);
+            if (scale > 1) scale = 1; // don't upscale small images
+
+            ImageOverlayContainer.Width = imgW * scale;
+            ImageOverlayContainer.Height = imgH * scale;
+            ImageOverlayScroll.ChangeView(null, null, 1f, true);
+        };
+
+        ImageOverlayImg.Source = fullRes;
+        ImageOverlayScroll.ChangeView(null, null, 1f, true);
+        ImageOverlay.Visibility = Visibility.Visible;
+        ImageOverlay.Opacity = 0;
+
+        // Build context menu
+        var menu = new MenuFlyout();
+        var copyItem = new MenuFlyoutItem { Text = "Copy image", Icon = new FontIcon { Glyph = "\uE8C8" } };
+        copyItem.Click += (s, e) => _ = CopyOverlayImageAsync();
+        menu.Items.Add(copyItem);
+        var saveItem = new MenuFlyoutItem { Text = "Save image as...", Icon = new FontIcon { Glyph = "\uE74E" } };
+        saveItem.Click += (s, e) => _ = SaveOverlayImageAsync();
+        menu.Items.Add(saveItem);
+        ImageOverlayImg.ContextFlyout = menu;
+
+        // Fade in
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ImageOverlay);
+        var anim = visual.Compositor.CreateScalarKeyFrameAnimation();
+        anim.InsertKeyFrame(0f, 0f);
+        anim.InsertKeyFrame(1f, 1f);
+        anim.Duration = TimeSpan.FromMilliseconds(200);
+        visual.StartAnimation("Opacity", anim);
+        ImageOverlay.Opacity = 1;
+    }
+
+    private void CloseImageOverlay()
+    {
+        if (ImageOverlay.Visibility == Visibility.Collapsed) return;
+
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ImageOverlay);
+        var anim = visual.Compositor.CreateScalarKeyFrameAnimation();
+        anim.InsertKeyFrame(0f, 1f);
+        anim.InsertKeyFrame(1f, 0f);
+        anim.Duration = TimeSpan.FromMilliseconds(150);
+        visual.StartAnimation("Opacity", anim);
+
+        _ = Task.Delay(160).ContinueWith(_ =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                ImageOverlay.Visibility = Visibility.Collapsed;
+                ImageOverlayImg.Source = null;
+                ImageOverlayContainer.Width = double.NaN;
+                ImageOverlayContainer.Height = double.NaN;
+                _overlayImageUrl = null;
+                _imgDragActive = false;
+                SetOverlayCursor(false);
+            });
+        });
+    }
+
+    private void OnImageOverlayDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        var currentZoom = ImageOverlayScroll.ZoomFactor;
+        if (currentZoom > 1.1f)
+        {
+            // Zoomed in — reset to fit
+            ImageOverlayScroll.ChangeView(null, null, 1f);
+        }
+        else
+        {
+            // Fit view — zoom to 3x centered on the tap point
+            var tapPos = e.GetPosition(ImageOverlayContainer);
+            var targetZoom = 3f;
+
+            // Calculate scroll offsets to center the tap point after zoom
+            var viewW = ImageOverlayScroll.ViewportWidth;
+            var viewH = ImageOverlayScroll.ViewportHeight;
+            var scrollX = tapPos.X * targetZoom - viewW / 2;
+            var scrollY = tapPos.Y * targetZoom - viewH / 2;
+
+            ImageOverlayScroll.ChangeView(
+                Math.Max(0, scrollX),
+                Math.Max(0, scrollY),
+                targetZoom);
+        }
+    }
+
+    private async Task CopyOverlayImageAsync()
+    {
+        try
+        {
+            // Try to get the temp file path from the image source
+            string? filePath = null;
+            if (ImageOverlayImg.Source is BitmapImage bmp && bmp.UriSource != null)
+                filePath = bmp.UriSource.LocalPath;
+
+            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+            {
+                var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(filePath);
+                var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                dp.SetBitmap(Windows.Storage.Streams.RandomAccessStreamReference.CreateFromFile(file));
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[IMG] Copy failed: {ex.Message}");
+        }
+    }
+
+    private async Task SaveOverlayImageAsync()
+    {
+        try
+        {
+            string? filePath = null;
+            if (ImageOverlayImg.Source is BitmapImage bmp && bmp.UriSource != null)
+                filePath = bmp.UriSource.LocalPath;
+
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            var picker = new Windows.Storage.Pickers.FileSavePicker();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+            picker.SuggestedFileName = "image";
+
+            if (ext is ".png")
+                picker.FileTypeChoices.Add("PNG Image", [".png"]);
+            else if (ext is ".gif")
+                picker.FileTypeChoices.Add("GIF Image", [".gif"]);
+            else if (ext is ".webp")
+                picker.FileTypeChoices.Add("WebP Image", [".webp"]);
+            else
+                picker.FileTypeChoices.Add("JPEG Image", [".jpg"]);
+
+            var destFile = await picker.PickSaveFileAsync();
+            if (destFile != null)
+            {
+                var bytes = await File.ReadAllBytesAsync(filePath);
+                await Windows.Storage.FileIO.WriteBytesAsync(destFile, bytes);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[IMG] Save failed: {ex.Message}");
+        }
     }
 
     public void OnNewMessage(string chatId, string messageJson)
@@ -170,6 +419,8 @@ public sealed partial class MessageView : UserControl
 
             if (string.IsNullOrEmpty(msg.Text) && (msg.Attachments == null || msg.Attachments.Count == 0)
                 && msg.Type == "TEXT") return;
+
+            if (ShouldSkipMessage(msg)) return;
 
             _allMessages.Add(msg);
             _messageMap[msg.Id] = msg;
@@ -198,7 +449,11 @@ public sealed partial class MessageView : UserControl
             MsgStack.Children.Add(MakeBubble(msg, showSender, isGrouped));
             if (MsgStack.Children[^1] is FrameworkElement newBubble)
                 AnimateBubbleIn(newBubble);
-            ScrollToBottom();
+
+            // Only auto-scroll if user is near the bottom, or it's their own message
+            var distFromBottom = MsgScroll.ScrollableHeight - MsgScroll.VerticalOffset;
+            if (distFromBottom < 150 || msg.IsSender)
+                ScrollToBottom();
         }
         catch { }
     }
@@ -406,14 +661,16 @@ public sealed partial class MessageView : UserControl
                 _msgCursor = response.OldestCursor ?? response.Cursor ?? olderSorted.FirstOrDefault()?.SortKey;
                 _msgHasMore = response.HasMore;
 
-                _allMessages.InsertRange(0, response.Messages);
-                foreach (var m in response.Messages)
+                // Deduplicate — only add messages not already in the map
+                var newMessages = response.Messages.Where(m => !_messageMap.ContainsKey(m.Id)).ToList();
+                _allMessages.InsertRange(0, newMessages);
+                foreach (var m in newMessages)
                 {
                     _messageMap[m.Id] = m;
                     _replyCache[m.Id] = m;
                 }
 
-                var olderByTime = response.Messages
+                var olderByTime = newMessages
                     .Where(m => m.Type != "REACTION")
                     .Where(m => !(string.IsNullOrEmpty(m.Text) && (m.Attachments == null || m.Attachments.Count == 0) && m.Type == "TEXT"))
                     .OrderBy(m => m.Timestamp)
@@ -425,6 +682,8 @@ public sealed partial class MessageView : UserControl
 
                 foreach (var m in olderByTime)
                 {
+                    if (ShouldSkipMessage(m)) continue;
+
                     var isOwn = m.IsSender;
                     var sender = m.SenderName ?? m.SenderId;
                     bool isGrouped = m.SenderId == lastSender && IsWithinMinutes(lastTimestamp, m.Timestamp, 2);
@@ -469,7 +728,8 @@ public sealed partial class MessageView : UserControl
                 Foreground = B(Accent),
                 BorderThickness = new Thickness(0),
                 Padding = new Thickness(16, 6, 16, 6),
-                CornerRadius = new CornerRadius(14)
+                CornerRadius = new CornerRadius(14),
+                Style = (Style)Resources["NoFlickerButton"]
             };
             loadBtn.Click += (s, e) => _ = LoadEarlierMessagesAsync();
             MsgStack.Children.Add(loadBtn);
@@ -481,6 +741,9 @@ public sealed partial class MessageView : UserControl
 
             if (string.IsNullOrEmpty(m.Text) && (m.Attachments == null || m.Attachments.Count == 0)
                 && m.Type == "TEXT") continue;
+
+            // Skip standalone URL-only messages (GIF/media links from bridges)
+            if (ShouldSkipMessage(m)) continue;
 
             var dateStr = DateHeader(m.Timestamp);
             if (dateStr != lastDate && !string.IsNullOrEmpty(dateStr))
@@ -583,7 +846,8 @@ public sealed partial class MessageView : UserControl
         }
 
         var text = StripSenderPrefix(m.Text, m);
-        if (!string.IsNullOrEmpty(text))
+        var isAttFn = !string.IsNullOrEmpty(text) && (IsAttachmentFilename(text, m) || IsMediaUrl(text));
+        if (!string.IsNullOrEmpty(text) && !isAttFn)
         {
             var tb = new TextBlock
             {
@@ -597,7 +861,7 @@ public sealed partial class MessageView : UserControl
                 tb.Inlines.Add(inline);
             content.Children.Add(tb);
         }
-        else if (m.Attachments == null || m.Attachments.Count == 0)
+        else if ((m.Attachments == null || m.Attachments.Count == 0) && !isAttFn)
         {
             content.Children.Add(new TextBlock
             {
@@ -637,6 +901,13 @@ public sealed partial class MessageView : UserControl
                 });
             }
             content.Children.Add(rxRow);
+        }
+
+        // If bubble has no real content (only timestamp + maybe sender label), collapse it
+        var minChildren = 1 + (showSender ? 1 : 0) + (!string.IsNullOrEmpty(m.LinkedMessageId) ? 1 : 0);
+        if (content.Children.Count <= minChildren)
+        {
+            return new Border { Visibility = Visibility.Collapsed, Height = 0 };
         }
 
         var bubble = new Border
@@ -866,20 +1137,9 @@ public sealed partial class MessageView : UserControl
 
     private FrameworkElement BuildAttachment(BeeperAttachment att, bool isOwn)
     {
-        if (att.IsVoiceNote)
+        if (att.IsVoiceNote || (att.MimeType ?? "").StartsWith("audio/") || (att.Type ?? "") == "AUDIO")
         {
-            var voiceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            voiceRow.Children.Add(new FontIcon { Glyph = "\uE767", FontSize = 16, Foreground = B(isOwn ? SentFg : Accent), VerticalAlignment = VerticalAlignment.Center });
-            voiceRow.Children.Add(Lbl("[Voice message]", 13, isOwn ? SentFg : Fg2));
-
-            return new Border
-            {
-                Background = B(isOwn ? AccentDark : Surface),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12, 8, 12, 8),
-                Margin = new Thickness(0, 2, 0, 2),
-                Child = voiceRow
-            };
+            return BuildAudioPlayer(att, isOwn);
         }
 
         if (att.IsSticker)
@@ -887,7 +1147,17 @@ public sealed partial class MessageView : UserControl
 
         var mimeType = att.MimeType ?? "";
         var attType = att.Type ?? "";
-        if (mimeType.StartsWith("image/") || attType == "IMAGE" || att.IsGif)
+        var fileName = att.FileName ?? "";
+        var fileExt = Path.GetExtension(fileName).ToLowerInvariant();
+        var srcExt = "";
+        try { srcExt = Path.GetExtension(new Uri(att.SrcURL ?? "http://x/x").AbsolutePath).ToLowerInvariant(); } catch { }
+
+        bool isImageByExt = fileExt is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp" or ".svg" or ".heic" or ".avif"
+                         || srcExt is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp" or ".svg" or ".heic" or ".avif";
+        bool isGifByExt = fileExt is ".gif" || srcExt is ".gif";
+        bool isImage = mimeType.StartsWith("image/") || attType == "IMAGE" || att.IsGif || isGifByExt || isImageByExt;
+
+        if (isImage)
         {
             var w = att.GetWidth();
             var h = att.GetHeight();
@@ -903,6 +1173,16 @@ public sealed partial class MessageView : UserControl
 
         if (mimeType.StartsWith("video/") || attType == "VIDEO")
         {
+            // Check if this is actually a GIF disguised as video (Tenor, Giphy, etc.)
+            var fn = (att.FileName ?? "").ToLowerInvariant();
+            bool isGifVideo = att.IsGif
+                || fn.Contains("tenor.com") || fn.Contains("giphy.com")
+                || fn.Contains("/gif-") || fn.Contains("/gif/")
+                || (fn.Contains("gif") && !fn.EndsWith(".mp4") && !fn.EndsWith(".mov"));
+
+            if (isGifVideo && !string.IsNullOrEmpty(att.SrcURL))
+                return BuildGifVideoElement(att, isOwn);
+
             var srcUrl = att.SrcURL;
             if (string.IsNullOrEmpty(srcUrl))
             {
@@ -963,7 +1243,8 @@ public sealed partial class MessageView : UserControl
                     Glyph = "\uE768",
                     FontSize = 20,
                     Foreground = B(Windows.UI.Color.FromArgb(255, 255, 255, 255))
-                }
+                },
+                Style = (Style)Resources["NoFlickerButton"]
             };
 
             var infoRow = new StackPanel
@@ -1008,6 +1289,356 @@ public sealed partial class MessageView : UserControl
             Margin = new Thickness(0, 2, 0, 2),
             Child = fileRow
         };
+    }
+
+    private FrameworkElement BuildAudioPlayer(BeeperAttachment att, bool isOwn)
+    {
+        var srcUrl = att.SrcURL;
+        var isVoice = att.IsVoiceNote;
+        var duration = att.Duration ?? 0;
+
+        var outerBorder = new Border
+        {
+            Background = B(isOwn ? AccentDark : Surface),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(0, 2, 0, 2),
+            MinWidth = 220
+        };
+
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Play/pause button
+        var playIcon = new FontIcon { Glyph = "\uE768", FontSize = 14, Foreground = B(isOwn ? SentFg : Accent) };
+        var playBtn = new Button
+        {
+            Width = 32, Height = 32,
+            CornerRadius = new CornerRadius(16),
+            Background = B(isOwn ? SentBg : SurfaceAlt),
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Content = playIcon,
+            VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)Resources["NoFlickerButton"]
+        };
+        Grid.SetColumn(playBtn, 0);
+        row.Children.Add(playBtn);
+
+        // Info column
+        var infoStack = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+
+        // Progress slider
+        var slider = new Slider
+        {
+            Minimum = 0, Maximum = 100, Value = 0,
+            Height = 24,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsEnabled = false,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        // Disable the built-in tooltip that gets clipped by the parent Border
+        ToolTipService.SetToolTip(slider, null);
+        slider.Loaded += (s, e) =>
+        {
+            try
+            {
+                var thumb = FindDescendant<Microsoft.UI.Xaml.Controls.Primitives.Thumb>(slider);
+                if (thumb != null) ToolTipService.SetToolTip(thumb, null);
+            }
+            catch { }
+        };
+        infoStack.Children.Add(slider);
+
+        // Duration / label
+        var durationStr = isVoice ? "Voice message" : (att.FileName ?? "Audio");
+        if (duration > 0)
+        {
+            var mins = (int)(duration / 60);
+            var secs = (int)(duration % 60);
+            durationStr = $"{mins}:{secs:D2}";
+        }
+        var timeLabel = Lbl(durationStr, 10, isOwn ? SentFg : Fg3);
+
+        // Bottom row: time | volume button | speed button
+        var bottomRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        bottomRow.Children.Add(timeLabel);
+
+        // Volume button with flyout containing slider
+        var volBtn = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 3,
+                Children = { new FontIcon { Glyph = "\uE767", FontSize = 10, Foreground = B(isOwn ? SentFg : Fg3) },
+                             Lbl("50%", 9, isOwn ? SentFg : Fg3) }
+            },
+            Padding = new Thickness(5, 2, 5, 2),
+            Background = B(isOwn ? SentBg : SurfaceAlt),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 0, MinHeight = 0,
+            Style = (Style)Resources["NoFlickerButton"]
+        };
+        var volSlider = new Slider
+        {
+            Minimum = 0, Maximum = 2, Value = 1,
+            Width = 120, Height = 28,
+            StepFrequency = 0.1,
+            Margin = new Thickness(8, 4, 8, 4)
+        };
+        var volFlyout = new Flyout
+        {
+            Content = new StackPanel
+            {
+                Spacing = 4, Width = 140,
+                Children = { Lbl("Volume", 11, Fg1, true), volSlider }
+            }
+        };
+        volBtn.Flyout = volFlyout;
+        bottomRow.Children.Add(volBtn);
+
+        // Speed button with flyout containing step slider
+        var speedLabel = Lbl("1x", 10, isOwn ? SentFg : Fg2);
+        var speedBtn = new Button
+        {
+            Content = speedLabel,
+            FontSize = 10,
+            Padding = new Thickness(5, 2, 5, 2),
+            Background = B(isOwn ? SentBg : SurfaceAlt),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 0, MinHeight = 0,
+            Style = (Style)Resources["NoFlickerButton"]
+        };
+        var speedSlider = new Slider
+        {
+            Minimum = 0.5, Maximum = 2.0, Value = 1.0,
+            Width = 120, Height = 28,
+            StepFrequency = 0.25,
+            SnapsTo = Microsoft.UI.Xaml.Controls.Primitives.SliderSnapsTo.StepValues,
+            Margin = new Thickness(8, 4, 8, 4)
+        };
+        var speedValueLabel = Lbl("1x", 11, Fg2);
+        speedValueLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        var speedFlyout = new Flyout
+        {
+            Content = new StackPanel
+            {
+                Spacing = 4, Width = 140,
+                Children = { Lbl("Speed", 11, Fg1, true), speedSlider, speedValueLabel }
+            }
+        };
+        speedBtn.Flyout = speedFlyout;
+        speedBtn.Tag = 1.0;
+        bottomRow.Children.Add(speedBtn);
+
+        infoStack.Children.Add(bottomRow);
+
+        Grid.SetColumn(infoStack, 1);
+        row.Children.Add(infoStack);
+
+        outerBorder.Child = row;
+
+        if (string.IsNullOrEmpty(srcUrl))
+            return outerBorder;
+
+        // Audio playback state
+        Windows.Media.Playback.MediaPlayer? player = null;
+        DispatcherTimer? progressTimer = null;
+        bool isPlaying = false;
+        bool updatingFromTimer = false;
+        var capturedSrcUrl = srcUrl;
+
+        playBtn.Click += (s, e) =>
+        {
+            if (isPlaying && player != null)
+            {
+                // Pause
+                player.Pause();
+                isPlaying = false;
+                playIcon.Glyph = "\uE768"; // Play
+                progressTimer?.Stop();
+                return;
+            }
+
+            if (player != null)
+            {
+                // Resume
+                player.Play();
+                isPlaying = true;
+                playIcon.Glyph = "\uE769"; // Pause
+                progressTimer?.Start();
+                return;
+            }
+
+            // First play — load audio
+            playIcon.Glyph = "\uE916"; // Loading dots
+            playBtn.IsEnabled = false;
+
+            _ = LoadAndPlayAudioAsync(capturedSrcUrl, (loadedPlayer) =>
+            {
+                player = loadedPlayer;
+                player.Volume = volSlider.Value;
+                player.PlaybackSession.PlaybackRate = (double)(speedBtn.Tag ?? 1.0);
+                isPlaying = true;
+                playIcon.Glyph = "\uE769"; // Pause
+                playBtn.IsEnabled = true;
+                slider.IsEnabled = true;
+
+                if (player.PlaybackSession.NaturalDuration.TotalSeconds > 0)
+                    slider.Maximum = player.PlaybackSession.NaturalDuration.TotalSeconds;
+
+                progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                progressTimer.Tick += (t, te) =>
+                {
+                    if (player?.PlaybackSession == null) return;
+                    var pos = player.PlaybackSession.Position.TotalSeconds;
+                    var dur = player.PlaybackSession.NaturalDuration.TotalSeconds;
+                    if (dur > 0)
+                    {
+                        slider.Maximum = dur;
+                        updatingFromTimer = true;
+                        slider.Value = pos;
+                        updatingFromTimer = false;
+                        var m = (int)(pos / 60);
+                        var sec = (int)(pos % 60);
+                        var tm = (int)(dur / 60);
+                        var tsec = (int)(dur % 60);
+                        timeLabel.Text = $"{m}:{sec:D2} / {tm}:{tsec:D2}";
+                    }
+                };
+                progressTimer.Start();
+
+                player.MediaEnded += (p, a) =>
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        isPlaying = false;
+                        playIcon.Glyph = "\uE768"; // Play
+                        progressTimer?.Stop();
+                        slider.Value = 0;
+                        player.PlaybackSession.Position = TimeSpan.Zero;
+                        if (duration > 0)
+                        {
+                            var mins = (int)(duration / 60);
+                            var secs = (int)(duration % 60);
+                            timeLabel.Text = $"{mins}:{secs:D2}";
+                        }
+                        else
+                            timeLabel.Text = isVoice ? "Voice message" : (att.FileName ?? "Audio");
+                    });
+                };
+
+                player.Play();
+            }, () =>
+            {
+                playIcon.Glyph = "\uE768";
+                playBtn.IsEnabled = true;
+            });
+        };
+
+        // Seek — when user moves slider (not from timer update), seek the player
+        slider.ValueChanged += (s, e) =>
+        {
+            if (updatingFromTimer) return;
+            if (player != null && player.PlaybackSession.NaturalDuration.TotalSeconds > 0)
+                player.PlaybackSession.Position = TimeSpan.FromSeconds(e.NewValue);
+        };
+
+        // Volume flyout slider
+        var volBtnContent = (StackPanel)volBtn.Content;
+        var volIcon = (FontIcon)volBtnContent.Children[0];
+        var volPctLabel = (TextBlock)volBtnContent.Children[1];
+        volSlider.ValueChanged += (s, e) =>
+        {
+            if (player != null) player.Volume = e.NewValue;
+            var pct = (int)(e.NewValue * 50);
+            volPctLabel.Text = $"{pct}%";
+            volIcon.Glyph = e.NewValue < 0.01 ? "\uE74F" : "\uE767";
+        };
+
+        // Speed flyout slider
+        speedSlider.ValueChanged += (s, e) =>
+        {
+            var spd = Math.Round(e.NewValue, 2);
+            speedLabel.Text = $"{spd}x";
+            speedValueLabel.Text = $"{spd}x";
+            speedBtn.Tag = spd;
+            if (player != null)
+                player.PlaybackSession.PlaybackRate = spd;
+        };
+
+        return outerBorder;
+    }
+
+    private async Task LoadAndPlayAudioAsync(string srcUrl, Action<Windows.Media.Playback.MediaPlayer> onReady, Action onFail)
+    {
+        try
+        {
+            // Extract mxc URI and resolve via API (same as images)
+            var mxcUri = ExtractMxcUri(srcUrl);
+            string? resolvedUrl = null;
+
+            if (!string.IsNullOrEmpty(mxcUri))
+            {
+                try
+                {
+                    var result = await Task.Run(async () => await App.Api.DownloadAssetAsync(mxcUri));
+                    resolvedUrl = result?.SrcURL;
+                }
+                catch { }
+            }
+
+            // Download bytes (sidecar decrypts via serve endpoint now)
+            var downloadUrl = resolvedUrl ?? srcUrl;
+            var bytes = await Task.Run(() =>
+            {
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(30);
+                if (!string.IsNullOrEmpty(App.Settings.AccessToken))
+                    http.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", App.Settings.AccessToken);
+                return http.GetByteArrayAsync(downloadUrl).GetAwaiter().GetResult();
+            });
+
+            // Save to temp and play
+            var tempDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Buzzr", "audio_cache");
+            Directory.CreateDirectory(tempDir);
+            var hash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(srcUrl)))[..16];
+            var ext = (bytes.Length > 4 && bytes[0] == 0x4F && bytes[1] == 0x67) ? ".ogg"
+                : (bytes.Length > 4 && bytes[0] == 0x49 && bytes[1] == 0x44) ? ".mp3"
+                : (bytes.Length > 4 && bytes[0] == 0xFF && bytes[1] == 0xFB) ? ".mp3"
+                : ".m4a";
+            var tempPath = Path.Combine(tempDir, hash + ext);
+            await File.WriteAllBytesAsync(tempPath, bytes);
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    var player = new Windows.Media.Playback.MediaPlayer();
+                    player.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(tempPath));
+                    onReady(player);
+                }
+                catch
+                {
+                    onFail();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[AUDIO] Load failed: {ex.Message}");
+            DispatcherQueue.TryEnqueue(() => onFail());
+        }
     }
 
     private static async Task<string?> ResolveAssetUrlAsync(string srcUrl)
@@ -1059,15 +1690,25 @@ public sealed partial class MessageView : UserControl
         };
         container.Child = placeholder;
 
-        if (_resolvedUrlCache.TryGetValue(srcUrl, out var cachedUrl))
+        var urlToLoad = _resolvedUrlCache.TryGetValue(srcUrl, out var cachedUrl) ? cachedUrl
+            : (srcUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+               || srcUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+               || srcUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) ? srcUrl
+            : null;
+
+        if (urlToLoad != null)
         {
-            SetImageOnContainer(container, cachedUrl, width, isOwn);
-        }
-        else if (srcUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
-              || srcUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-              || srcUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            SetImageOnContainer(container, srcUrl, width, isOwn);
+            // BitmapImage can't load http://localhost in WinUI 3 (E_NETWORK_ERROR),
+            // so go straight to stream download for localhost URLs
+            if (urlToLoad.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase)
+                || urlToLoad.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = LoadImageViaApiAsync(container, urlToLoad, width, isOwn);
+            }
+            else
+            {
+                SetImageOnContainer(container, urlToLoad, width, isOwn);
+            }
         }
         else
         {
@@ -1081,7 +1722,7 @@ public sealed partial class MessageView : UserControl
     {
         try
         {
-            var bmp = new BitmapImage(new Uri(resolvedUrl));
+            var bmp = new BitmapImage();
             if (width > 0) bmp.DecodePixelWidth = width;
             var img = new Image
             {
@@ -1091,22 +1732,321 @@ public sealed partial class MessageView : UserControl
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
-            bmp.ImageOpened += (s, e) => ScrollToBottomIfNearEnd();
-            container.Background = null;
-            container.MinWidth = 0;
-            container.MinHeight = 0;
+
+            bmp.ImageOpened += (s, e) =>
+            {
+                container.Background = null;
+                container.MinWidth = 0;
+                container.MinHeight = 0;
+                ScrollToBottomIfNearEnd();
+            };
+
+            var capturedUrl = resolvedUrl;
+            var capturedWidth = width;
+            var capturedIsOwn = isOwn;
+            bmp.ImageFailed += (s, e) =>
+            {
+                AppLog.Write($"[IMG] BitmapImage failed for {capturedUrl}: {e.ErrorMessage}, falling back to stream download");
+                _ = LoadImageViaApiAsync(container, capturedUrl, capturedWidth, capturedIsOwn);
+            };
+
             container.Child = img;
-            var launchUrl = resolvedUrl;
+            bmp.UriSource = new Uri(resolvedUrl);
+
+            var capturedBmp = bmp;
             container.PointerPressed += (s, e) =>
             {
                 if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
-                try { _ = Windows.System.Launcher.LaunchUriAsync(new Uri(launchUrl)); }
-                catch { }
+                ShowImageOverlay(capturedBmp);
             };
         }
         catch
         {
             container.Child = Lbl("[Image failed to load]", 12, isOwn ? SentFg : Fg2);
+        }
+    }
+
+    private FrameworkElement BuildGifVideoElement(BeeperAttachment att, bool isOwn)
+    {
+        var vw = att.GetWidth();
+        var vh = att.GetHeight();
+        int maxW = 300, maxH = 250;
+        if (vw > 0 && vh > 0)
+        {
+            var ratio = Math.Min((double)maxW / vw, (double)maxH / vh);
+            if (ratio < 1) { vw = (int)(vw * ratio); vh = (int)(vh * ratio); }
+        }
+        else { vw = 200; vh = 150; }
+
+        var container = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(0, 2, 0, 2),
+            Width = vw,
+            Height = vh,
+            Background = B(isOwn ? AccentDark : Surface)
+        };
+
+        var loadRing = new ProgressRing
+        {
+            IsActive = true, Width = 24, Height = 24,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        container.Child = loadRing;
+
+        var capturedSrcUrl = att.SrcURL!;
+        var capturedW = vw;
+        var capturedH = vh;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Download and decrypt like images
+                var mxcUri = ExtractMxcUri(capturedSrcUrl);
+                string? resolvedUrl = null;
+                if (!string.IsNullOrEmpty(mxcUri))
+                {
+                    try
+                    {
+                        var result = await App.Api.DownloadAssetAsync(mxcUri);
+                        resolvedUrl = result?.SrcURL;
+                    }
+                    catch { }
+                }
+
+                var downloadUrl = resolvedUrl ?? capturedSrcUrl;
+                var bytes = await Task.Run(() =>
+                {
+                    using var http = new HttpClient();
+                    http.Timeout = TimeSpan.FromSeconds(30);
+                    if (!string.IsNullOrEmpty(App.Settings.AccessToken))
+                        http.DefaultRequestHeaders.Authorization =
+                            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", App.Settings.AccessToken);
+                    return http.GetByteArrayAsync(downloadUrl).GetAwaiter().GetResult();
+                });
+
+                var tempDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Buzzr", "img_cache");
+                Directory.CreateDirectory(tempDir);
+                var hash = Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(capturedSrcUrl)))[..16];
+                var tempPath = Path.Combine(tempDir, hash + ".mp4");
+                File.WriteAllBytes(tempPath, bytes);
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        var player = new Windows.Media.Playback.MediaPlayer();
+                        player.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(tempPath));
+                        player.IsLoopingEnabled = true;
+                        player.IsMuted = true;
+                        player.AutoPlay = true;
+
+                        var playerElement = new MediaPlayerElement
+                        {
+                            Width = capturedW,
+                            Height = capturedH,
+                            AreTransportControlsEnabled = false,
+                            Stretch = Stretch.Uniform
+                        };
+                        playerElement.SetMediaPlayer(player);
+
+                        container.Background = null;
+                        container.Child = playerElement;
+                        player.Play();
+                    }
+                    catch
+                    {
+                        container.Child = Lbl("[GIF failed to load]", 12, isOwn ? SentFg : Fg2);
+                    }
+                });
+            }
+            catch
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                    container.Child = Lbl("[GIF failed to load]", 12, isOwn ? SentFg : Fg2));
+            }
+        });
+
+        return container;
+    }
+
+    private static string? ExtractMxcUri(string url)
+    {
+        // Extract mxc:// URI from serve URL like http://localhost:29110/v1/assets/serve?uri=mxc://...
+        try
+        {
+            var uri = new Uri(url);
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var mxcUri = query["uri"];
+            if (!string.IsNullOrEmpty(mxcUri) && mxcUri.StartsWith("mxc://"))
+                return mxcUri;
+        }
+        catch { }
+        return null;
+    }
+
+    private async Task LoadImageViaApiAsync(Border container, string url, int width, bool isOwn)
+    {
+        try
+        {
+            // Extract mxc URI and call the proper download API to get a decrypted URL
+            var mxcUri = ExtractMxcUri(url);
+            string? resolvedUrl = null;
+
+            if (!string.IsNullOrEmpty(mxcUri))
+            {
+                AppLog.Write($"[IMG] Resolving mxc URI: {mxcUri}");
+                try
+                {
+                    var result = await Task.Run(async () => await App.Api.DownloadAssetAsync(mxcUri));
+                    resolvedUrl = result?.SrcURL;
+                    AppLog.Write($"[IMG] DownloadAssetAsync returned: {resolvedUrl?.Substring(0, Math.Min(resolvedUrl?.Length ?? 0, 80))}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write($"[IMG] DownloadAssetAsync failed: {ex.Message}");
+                }
+            }
+
+            // If API gave us a non-localhost URL, try BitmapImage directly
+            if (!string.IsNullOrEmpty(resolvedUrl)
+                && !resolvedUrl.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase)
+                && !resolvedUrl.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase))
+            {
+                DispatcherQueue.TryEnqueue(() => SetImageOnContainer(container, resolvedUrl, width, isOwn));
+                return;
+            }
+
+            // Fall back: download bytes (from resolved URL or original) and save to temp file
+            var downloadUrl = resolvedUrl ?? url;
+            AppLog.Write($"[IMG] Downloading bytes from: {downloadUrl.Substring(0, Math.Min(downloadUrl.Length, 80))}");
+
+            var bytes = await Task.Run(() =>
+            {
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(30);
+                if (!string.IsNullOrEmpty(App.Settings.AccessToken))
+                    http.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", App.Settings.AccessToken);
+                return http.GetByteArrayAsync(downloadUrl).GetAwaiter().GetResult();
+            });
+
+            AppLog.Write($"[IMG] Downloaded {bytes.Length} bytes, first bytes: {(bytes.Length >= 4 ? $"{bytes[0]:X2} {bytes[1]:X2} {bytes[2]:X2} {bytes[3]:X2}" : "too short")}");
+
+            // Check if the bytes are actually an image
+            bool isValidImage = bytes.Length > 8 && (
+                (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) || // PNG
+                (bytes[0] == 0xFF && bytes[1] == 0xD8) || // JPEG
+                (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) || // GIF
+                (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46) // RIFF (WebP)
+            );
+
+            if (!isValidImage)
+            {
+                AppLog.Write($"[IMG] Downloaded data is NOT a valid image format, trying API download with auth...");
+                // The serve endpoint returned encrypted data, try downloading with auth
+                if (!string.IsNullOrEmpty(mxcUri))
+                {
+                    bytes = await Task.Run(() =>
+                    {
+                        using var http = new HttpClient();
+                        http.Timeout = TimeSpan.FromSeconds(30);
+                        if (!string.IsNullOrEmpty(App.Settings.AccessToken))
+                            http.DefaultRequestHeaders.Authorization =
+                                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", App.Settings.AccessToken);
+                        var resp = http.GetAsync($"{BeeperApiService.ApiBaseUrl}/v1/assets/serve?uri={Uri.EscapeDataString(mxcUri)}").GetAwaiter().GetResult();
+                        resp.EnsureSuccessStatusCode();
+                        return resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                    });
+                    AppLog.Write($"[IMG] Re-downloaded with auth: {bytes.Length} bytes, first: {(bytes.Length >= 4 ? $"{bytes[0]:X2} {bytes[1]:X2} {bytes[2]:X2} {bytes[3]:X2}" : "too short")}");
+                    isValidImage = bytes.Length > 8 && (
+                        (bytes[0] == 0x89 && bytes[1] == 0x50) || (bytes[0] == 0xFF && bytes[1] == 0xD8) ||
+                        (bytes[0] == 0x47 && bytes[1] == 0x49) || (bytes[0] == 0x52 && bytes[1] == 0x49));
+                }
+            }
+
+            if (!isValidImage)
+            {
+                AppLog.Write($"[IMG] Still not a valid image after auth retry");
+                DispatcherQueue.TryEnqueue(() =>
+                    container.Child = Lbl("[Image failed to load]", 12, isOwn ? SentFg : Fg2));
+                return;
+            }
+
+            var capturedBytes = bytes;
+            var capturedUrl = url;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    var tempDir = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "Buzzr", "img_cache");
+                    Directory.CreateDirectory(tempDir);
+                    var hash = Convert.ToHexString(
+                        System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(capturedUrl)))[..16];
+                    var ext = (capturedBytes[0] == 0x89) ? ".png"
+                        : (capturedBytes[0] == 0xFF) ? ".jpg"
+                        : (capturedBytes[0] == 0x47) ? ".gif"
+                        : ".webp";
+                    var tempPath = Path.Combine(tempDir, hash + ext);
+                    File.WriteAllBytes(tempPath, capturedBytes);
+
+                    var bmp = new BitmapImage(new Uri(tempPath));
+                    if (width > 0) bmp.DecodePixelWidth = width;
+
+                    var img = new Image
+                    {
+                        Source = bmp,
+                        MaxWidth = 300,
+                        MaxHeight = 300,
+                        Stretch = Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+
+                    bmp.ImageOpened += (s, e) =>
+                    {
+                        container.Background = null;
+                        container.MinWidth = 0;
+                        container.MinHeight = 0;
+                        ScrollToBottomIfNearEnd();
+                    };
+                    bmp.ImageFailed += (s, e) =>
+                    {
+                        AppLog.Write($"[IMG] File load failed: {e.ErrorMessage}");
+                        container.Child = Lbl("[Image failed to load]", 12, isOwn ? SentFg : Fg2);
+                    };
+
+                    container.Child = img;
+
+                    var clickBmp = bmp;
+                    container.PointerPressed += (s, e) =>
+                    {
+                        if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+                        ShowImageOverlay(clickBmp);
+                    };
+
+                    AppLog.Write($"[IMG] Loaded from temp: {tempPath}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write($"[IMG] Temp file error: {ex.Message}");
+                    container.Child = Lbl("[Image failed to load]", 12, isOwn ? SentFg : Fg2);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[IMG] Error: {ex.Message}");
+            DispatcherQueue.TryEnqueue(() =>
+                container.Child = Lbl("[Image failed to load]", 12, isOwn ? SentFg : Fg2));
         }
     }
 
@@ -1164,6 +2104,19 @@ public sealed partial class MessageView : UserControl
         return Math.Abs((d2 - d1).TotalMinutes) <= minutes;
     }
 
+    private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var result = FindDescendant<T>(child);
+            if (result != null) return result;
+        }
+        return null;
+    }
+
     private static string FormatFileSize(long bytes)
     {
         if (bytes < 1024) return $"{bytes} B";
@@ -1194,6 +2147,94 @@ public sealed partial class MessageView : UserControl
         }
 
         return text;
+    }
+
+    private static bool IsAttachmentFilename(string text, BeeperMessage m)
+    {
+        if (m.Attachments == null || m.Attachments.Count == 0) return false;
+
+        var trimmed = text.Trim();
+
+        // Check if text exactly matches any attachment filename
+        foreach (var att in m.Attachments)
+        {
+            if (!string.IsNullOrEmpty(att.FileName) &&
+                string.Equals(trimmed, att.FileName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        // Check if text looks like a bare filename for media/file type messages
+        if (m.Type is "IMAGE" or "VIDEO" or "FILE" or "STICKER" or "VOICE" or "AUDIO")
+        {
+            var ext = Path.GetExtension(trimmed).ToLowerInvariant();
+            if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".heic" or ".avif"
+                or ".mp4" or ".mov" or ".avi" or ".mkv" or ".webm"
+                or ".ogg" or ".mp3" or ".m4a" or ".wav" or ".aac" or ".flac" or ".opus" or ".wma"
+                or ".pdf" or ".doc" or ".docx" or ".zip" or ".rar")
+                return true;
+        }
+
+        // Check if text is or contains a URL (e.g., tenor links for GIFs, discord CDN links)
+        if (m.Attachments.Count > 0 &&
+            (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.Contains("tenor.com/", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.Contains("giphy.com/", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.Contains("cdn.discordapp.com/", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.Contains("media.discordapp.net/", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
+    }
+
+    private bool ShouldSkipMessage(BeeperMessage m)
+    {
+        // Skip text-only messages that are just a media URL (bridges send these alongside the attachment message)
+        if ((m.Attachments == null || m.Attachments.Count == 0) && !string.IsNullOrEmpty(m.Text))
+        {
+            var raw = m.Text.Trim();
+            if (IsMediaUrl(raw)) return true;
+            var stripped = StripSenderPrefix(raw, m)?.Trim() ?? "";
+            if (IsMediaUrl(stripped)) return true;
+            if (ContainsMediaUrl(raw)) return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsMediaUrl(string text)
+    {
+        // Check if text is "SomeName: <media URL>" or just a media URL with any prefix
+        // Only match if after removing a possible "word: " prefix, the rest is a single media URL
+        var colonIdx = text.IndexOf(": ");
+        if (colonIdx > 0 && colonIdx < 40)
+        {
+            var afterColon = text[(colonIdx + 2)..].Trim();
+            if (IsMediaUrl(afterColon)) return true;
+        }
+        // Also check if the text just contains a known media domain and nothing else meaningful
+        if (!text.Contains(' ') && !text.Contains('\n'))
+        {
+            if (text.Contains("tenor.com/", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("giphy.com/", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("cdn.discordapp.com/", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("media.discordapp.net/", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsMediaUrl(string text)
+    {
+        var trimmed = text.Trim();
+        // Only suppress if the entire text is a single URL to a known media host
+        if (trimmed.Contains(' ') || trimmed.Contains('\n')) return false;
+        if (!trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return trimmed.Contains("tenor.com/", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("giphy.com/", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("cdn.discordapp.com/", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("media.discordapp.net/", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task PlayVideoAsync(Border container, string srcUrl, int width, int height,

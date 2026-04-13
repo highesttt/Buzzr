@@ -301,3 +301,16 @@ func (s *Store) GetMessagesBeforeFromDB(roomID string, beforeTimestamp int64, li
 	}
 	return nil
 }
+
+func (s *Store) GetEncryptedFileJSON(mxcURI string) string {
+	if s.db != nil {
+		return s.db.GetEncryptedFileJSON(mxcURI)
+	}
+	return ""
+}
+
+func (s *Store) SaveEncryptedFile(mxcURI, fileJSON string) {
+	if s.db != nil {
+		s.db.SaveEncryptedFile(mxcURI, fileJSON)
+	}
+}
