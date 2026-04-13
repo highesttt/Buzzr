@@ -497,6 +497,18 @@ func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, li
 	return msgs
 }
 
+func (s *SQLiteStore) GetTimestampBySortKey(roomID, sortKey string) int64 {
+	if s.db == nil {
+		return 0
+	}
+	var ts int64
+	err := s.db.QueryRow("SELECT timestamp FROM messages WHERE room_id = ? AND sort_key = ? LIMIT 1", roomID, sortKey).Scan(&ts)
+	if err != nil {
+		return 0
+	}
+	return ts
+}
+
 func (s *SQLiteStore) GetEncryptedFileJSON(mxcURI string) string {
 	if s.db == nil {
 		return ""

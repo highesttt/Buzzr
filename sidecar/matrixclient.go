@@ -1479,13 +1479,21 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 	}
 
 	if from != "" && direction == 'b' {
+		// Look up the timestamp of the cursor message from DB, then fetch older messages
+		cursorTs := mc.store.GetTimestampBySortKey(roomID, from)
+		if cursorTs > 0 {
+			dbMsgs := mc.store.GetMessagesBeforeFromDB(roomID, cursorTs, limit)
+			if len(dbMsgs) > 0 {
+				var nextCursor string
+				nextCursor = dbMsgs[0].SortKey
+				return dbMsgs, true, nextCursor, nil
+			}
+		}
+		// Also try parsing cursor as a plain timestamp
 		if ts, err := strconv.ParseInt(from, 10, 64); err == nil && ts > 0 {
 			dbMsgs := mc.store.GetMessagesBeforeFromDB(roomID, ts, limit)
 			if len(dbMsgs) > 0 {
-				var nextCursor string
-				if len(dbMsgs) > 0 {
-					nextCursor = dbMsgs[0].SortKey
-				}
+				nextCursor := dbMsgs[0].SortKey
 				return dbMsgs, true, nextCursor, nil
 			}
 			from = ""

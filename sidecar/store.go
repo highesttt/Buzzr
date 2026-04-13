@@ -309,6 +309,13 @@ func (s *Store) GetEncryptedFileJSON(mxcURI string) string {
 	return ""
 }
 
+func (s *Store) GetTimestampBySortKey(roomID, sortKey string) int64 {
+	if s.db != nil {
+		return s.db.GetTimestampBySortKey(roomID, sortKey)
+	}
+	return 0
+}
+
 func (s *Store) SaveEncryptedFile(mxcURI, fileJSON string) {
 	if s.db != nil {
 		s.db.SaveEncryptedFile(mxcURI, fileJSON)
