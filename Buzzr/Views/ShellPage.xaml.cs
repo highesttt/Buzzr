@@ -110,22 +110,27 @@ public sealed partial class ShellPage : Page
         foreach (var account in _accounts)
         {
             var networkName = NetName(account.AccountId, account.Network);
-            var iconContainer = new Grid { Width = 36, Height = 40, Padding = new Thickness(0, 2, 0, 2) };
-
-            var iconBorder = NetIcon(account.AccountId, 32, account.Network);
-            iconContainer.Children.Add(iconBorder);
+            var iconContainer = new Grid { Width = 44, Height = 40 };
+            iconContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+            iconContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            iconContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
 
             var selIndicator = new Border
             {
-                Width = 3, Height = 20,
-                CornerRadius = new CornerRadius(2),
+                Width = 3, Height = 18,
+                CornerRadius = new CornerRadius(0, 2, 2, 0),
                 Background = B(Accent),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = Visibility.Collapsed,
                 Tag = "sel"
             };
+            Grid.SetColumn(selIndicator, 0);
             iconContainer.Children.Add(selIndicator);
+
+            var iconBorder = NetIcon(account.AccountId, 32, account.Network);
+            Grid.SetColumn(iconBorder, 1);
+            iconContainer.Children.Add(iconBorder);
 
             var tooltipText = networkName;
             if (account.User != null)

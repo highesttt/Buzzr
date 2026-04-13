@@ -14,7 +14,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Sidebar -->
-        <Border Grid.Column="0" BorderBrush="#1A1E20" BorderThickness="0,0,1,0">
+        <Border Grid.Column="0" BorderThickness="0">
             <Grid Background="#E6242424">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>

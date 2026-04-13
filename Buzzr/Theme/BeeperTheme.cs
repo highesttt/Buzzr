@@ -27,6 +27,7 @@ public static class T
     public static readonly Color Fg3        = C("#636363");
     public static readonly Color Err        = C("#FF4343");
     public static readonly Color Ok         = C("#6CCB5F");
+    public static readonly Color AccentSoft = Color.FromArgb(100, Accent.R, Accent.G, Accent.B);
     public static readonly Color SentBg     = Accent;
     public static readonly Color SentFg     = GetContrastForeground(Accent);
     public static readonly Color Black      = C("#000000");

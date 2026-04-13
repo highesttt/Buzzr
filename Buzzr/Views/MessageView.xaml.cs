@@ -3093,7 +3093,10 @@ public sealed partial class MessageView : UserControl
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = B(isOwn ? SentFg : Fg1),
                 FontFamily = new FontFamily("Segoe UI"),
-                IsTextSelectionEnabled = true
+                IsTextSelectionEnabled = true,
+                SelectionHighlightColor = new SolidColorBrush(isOwn
+                    ? Windows.UI.Color.FromArgb(100, SentFg.R, SentFg.G, SentFg.B)
+                    : AccentSoft)
             };
             foreach (var inline in ParseMarkdownInlines(joined, isOwn, mentions))
                 tb.Inlines.Add(inline);
@@ -3112,7 +3115,10 @@ public sealed partial class MessageView : UserControl
                 Foreground = B(isOwn ? SentFg : Fg2),
                 FontFamily = new FontFamily("Segoe UI"),
                 FontStyle = Windows.UI.Text.FontStyle.Italic,
-                IsTextSelectionEnabled = true
+                IsTextSelectionEnabled = true,
+                SelectionHighlightColor = new SolidColorBrush(isOwn
+                    ? Windows.UI.Color.FromArgb(100, SentFg.R, SentFg.G, SentFg.B)
+                    : AccentSoft)
             };
             foreach (var inline in ParseMarkdownInlines(joined, isOwn, mentions))
                 tb.Inlines.Add(inline);
