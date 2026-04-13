@@ -13,7 +13,7 @@ namespace Buzzr;
 
 public partial class App : Application
 {
-    public const string Version = "0.0.2";
+    public const string Version = "0.0.3";
 
     private Window? _window;
     private Frame? _rootFrame;
@@ -25,7 +25,20 @@ public partial class App : Application
     public static Frame? RootFrame { get; private set; }
     public static bool IsWindowFocused { get; private set; } = true;
 
-    public App() { this.InitializeComponent(); }
+    public App()
+    {
+        this.InitializeComponent();
+        this.UnhandledException += (s, e) =>
+        {
+            var ex = e.Exception;
+            var inner = ex?.InnerException;
+            AppLog.Write($"[CRASH] {ex?.GetType().Name}: {ex?.Message} | Source: {ex?.Source}");
+            // Don't mark COM exceptions as handled — let the runtime deal with them
+            // Only handle managed exceptions to prevent non-fatal crashes
+            if (ex is not System.Runtime.InteropServices.COMException)
+                e.Handled = true;
+        };
+    }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {

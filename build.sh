@@ -1,7 +1,7 @@
 #!/bin/bash
-# Usage: ./build.sh [--version 0.0.2.0] [--platform x64] [--config Release] [--skip-sign] [--debug-only]
+# Usage: ./build.sh [--version 0.0.3.0] [--platform x64] [--config Release] [--skip-sign] [--debug-only]
 
-VERSION="0.0.2.0"
+VERSION="0.0.3.0"
 PLATFORM="x64"
 CONFIG="Release"
 SKIP_SIGN=false

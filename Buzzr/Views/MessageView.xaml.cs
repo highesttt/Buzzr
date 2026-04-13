@@ -32,6 +32,7 @@ public sealed partial class MessageView : UserControl
 
     private CancellationTokenSource? _chatSearchCts;
     private CancellationTokenSource? _loadChatCts;
+    private int _mentionSelectedIndex = -1;
 
     private static readonly ConcurrentDictionary<string, string> _resolvedUrlCache = new();
     private readonly ConcurrentDictionary<string, BeeperMessage> _replyCache = new();
@@ -67,12 +68,47 @@ public sealed partial class MessageView : UserControl
         MsgInput.TextChanged += (s, e) =>
         {
             SendBtn.IsEnabled = !string.IsNullOrWhiteSpace(MsgInput.Text) || _stagedAttachments.Count > 0;
+            UpdateMentionPopup();
         };
 
         SendBtn.Click += (s, e) => _ = SendAsync();
 
         MsgInput.KeyDown += (s, e) =>
         {
+            if (MentionPopup.Visibility == Visibility.Visible)
+            {
+                if (e.Key == Windows.System.VirtualKey.Escape)
+                {
+                    MentionPopup.Visibility = Visibility.Collapsed;
+                    _mentionSelectedIndex = -1;
+                    e.Handled = true;
+                    return;
+                }
+                if (e.Key == Windows.System.VirtualKey.Down)
+                {
+                    _mentionSelectedIndex = Math.Min(_mentionSelectedIndex + 1, MentionList.Children.Count - 1);
+                    HighlightMentionItem(_mentionSelectedIndex);
+                    e.Handled = true;
+                    return;
+                }
+                if (e.Key == Windows.System.VirtualKey.Up)
+                {
+                    _mentionSelectedIndex = Math.Max(_mentionSelectedIndex - 1, 0);
+                    HighlightMentionItem(_mentionSelectedIndex);
+                    e.Handled = true;
+                    return;
+                }
+                if (e.Key == Windows.System.VirtualKey.Enter || e.Key == Windows.System.VirtualKey.Tab)
+                {
+                    if (MentionList.Children.Count > 0)
+                    {
+                        var idx = _mentionSelectedIndex >= 0 ? _mentionSelectedIndex : 0;
+                        SelectMentionAtIndex(idx);
+                    }
+                    e.Handled = true;
+                    return;
+                }
+            }
             if (e.Key == Windows.System.VirtualKey.Enter)
             {
                 var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(
@@ -409,6 +445,9 @@ public sealed partial class MessageView : UserControl
             if (_messageMap.ContainsKey(msg.Id))
             {
                 var existing = _messageMap[msg.Id];
+                if (!string.IsNullOrEmpty(existing.Text) && existing.Text != msg.Text)
+                    existing.IsEdited = true;
+                if (msg.IsEdited) existing.IsEdited = true;
                 existing.Text = msg.Text;
                 existing.Reactions = msg.Reactions;
                 existing.Attachments = msg.Attachments;
@@ -849,17 +888,7 @@ public sealed partial class MessageView : UserControl
         var isAttFn = !string.IsNullOrEmpty(text) && (IsAttachmentFilename(text, m) || IsMediaUrl(text));
         if (!string.IsNullOrEmpty(text) && !isAttFn)
         {
-            var tb = new TextBlock
-            {
-                FontSize = 14,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = B(isOwn ? SentFg : Fg1),
-                FontFamily = new FontFamily("Segoe UI"),
-                IsTextSelectionEnabled = true
-            };
-            foreach (var inline in ParseMarkdownInlines(text, isOwn))
-                tb.Inlines.Add(inline);
-            content.Children.Add(tb);
+            RenderTextWithQuotes(content, text, isOwn);
         }
         else if ((m.Attachments == null || m.Attachments.Count == 0) && !isAttFn)
         {
@@ -883,23 +912,52 @@ public sealed partial class MessageView : UserControl
             });
         }
 
-        content.Children.Add(Lbl(MessageTime(m.Timestamp), 10, isOwn ? SentFg : Fg3,
+        // Timestamp + edited indicator
+        var timeStr = MessageTime(m.Timestamp);
+        if (m.IsEdited) timeStr += "  (edited)";
+        content.Children.Add(Lbl(timeStr, 10, isOwn ? SentFg : Fg3,
             margin: new Thickness(0, 2, 0, 0)));
 
+        // Clickable reactions
         if (m.Reactions?.Count > 0)
         {
-            var rxRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(0, 4, 0, 0) };
+            var rxRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
+                Margin = new Thickness(0, 4, 0, 0) };
             var grouped = m.Reactions.GroupBy(r => r.DisplayEmoji);
             foreach (var g in grouped)
             {
-                rxRow.Children.Add(new Border
+                var emoji = g.Key;
+                var rxBorder = new Border
                 {
                     Background = B(Surface),
                     CornerRadius = new CornerRadius(10),
                     Padding = new Thickness(6, 2, 6, 2),
-                    Child = Lbl($"{g.Key} {g.Count()}", 11, Fg2)
-                });
+                    Child = Lbl($"{emoji} {g.Count()}", 11, Fg2)
+                };
+                var capturedMsg = m;
+                var capturedEmoji = emoji;
+                rxBorder.PointerPressed += (s, e) =>
+                {
+                    if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+                    _ = AddReactionAsync(capturedMsg, capturedEmoji);
+                };
+                rxRow.Children.Add(rxBorder);
             }
+            // "+" button to add new reaction
+            var addBtn = new Border
+            {
+                Background = B(Surface),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(6, 2, 6, 2),
+                Child = Lbl("+", 11, Fg3)
+            };
+            var capturedM = m;
+            addBtn.PointerPressed += (s, e) =>
+            {
+                if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+                ShowReactionPicker(capturedM, (Border)s);
+            };
+            rxRow.Children.Add(addBtn);
             content.Children.Add(rxRow);
         }
 
@@ -1031,6 +1089,165 @@ public sealed partial class MessageView : UserControl
         ReplyBar.Visibility = Visibility.Collapsed;
     }
 
+    private string? GetMentionQuery()
+    {
+        var text = MsgInput.Text;
+        if (string.IsNullOrEmpty(text)) return null;
+        var cursorPos = MsgInput.SelectionStart;
+        if (cursorPos <= 0 || cursorPos > text.Length) return null;
+
+        // Walk back from cursor to find '@'
+        var searchStart = cursorPos - 1;
+        for (int i = searchStart; i >= 0; i--)
+        {
+            if (text[i] == '@')
+            {
+                // Make sure @ is at start or preceded by space/newline
+                if (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\n')
+                    return text[(i + 1)..cursorPos];
+                return null;
+            }
+            if (text[i] == ' ' || text[i] == '\n') return null;
+        }
+        return null;
+    }
+
+    private void UpdateMentionPopup()
+    {
+        var query = GetMentionQuery();
+        if (query == null)
+        {
+            MentionPopup.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MentionList.Children.Clear();
+        var queryLower = query.ToLowerInvariant();
+
+        // Add participants first (filter out bots and self)
+        foreach (var p in _participantMap.Values)
+        {
+            if (p.IsSelf) continue;
+            if (p.Id.Contains("bot:", StringComparison.OrdinalIgnoreCase)) continue;
+            if (p.Id.Contains("bridge", StringComparison.OrdinalIgnoreCase)) continue;
+            if ((p.FullName ?? "").Contains("bridge", StringComparison.OrdinalIgnoreCase)) continue;
+            var name = p.FullName ?? p.Username ?? p.DisplayText ?? p.Id;
+            if (queryLower.Length == 0 ||
+                (name?.Contains(queryLower, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (p.Username?.Contains(queryLower, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                p.Id.Contains(queryLower, StringComparison.OrdinalIgnoreCase))
+            {
+                AddMentionItem($"@{name}", p.Id, null, $"@{name}");
+            }
+        }
+
+        // Add @room at the end
+        if ("room".Contains(queryLower) || queryLower.Length == 0)
+        {
+            AddMentionItem("@room", "Notify everyone", "\uE716", "@room");
+        }
+
+        if (MentionList.Children.Count > 0)
+        {
+            MentionPopup.Visibility = Visibility.Visible;
+            _mentionSelectedIndex = 0;
+            HighlightMentionItem(0);
+        }
+        else
+        {
+            MentionPopup.Visibility = Visibility.Collapsed;
+            _mentionSelectedIndex = -1;
+        }
+    }
+
+    private void HighlightMentionItem(int index)
+    {
+        for (int i = 0; i < MentionList.Children.Count; i++)
+        {
+            if (MentionList.Children[i] is Border b)
+            {
+                b.Background = B(i == index ? Hover : Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                if (i == index)
+                    b.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true });
+            }
+        }
+    }
+
+    private void SelectMentionAtIndex(int index)
+    {
+        if (index < 0 || index >= MentionList.Children.Count) return;
+        if (MentionList.Children[index] is Border b && b.Child is Grid row)
+        {
+            var textStack = (StackPanel)row.Children[row.Children.Count - 1];
+            var label = (TextBlock)textStack.Children[0];
+            InsertMention(label.Text);
+        }
+    }
+
+    private void AddMentionItem(string displayName, string subtitle, string? iconGlyph, string insertText)
+    {
+        var row = new Grid { Padding = new Thickness(8, 6, 8, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        if (iconGlyph != null)
+        {
+            var icon = new FontIcon { Glyph = iconGlyph, FontSize = 14, Foreground = B(Accent),
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+            Grid.SetColumn(icon, 0);
+            row.Children.Add(icon);
+        }
+
+        var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        textStack.Children.Add(Lbl(displayName, 13, Fg1, true));
+        if (!string.IsNullOrEmpty(subtitle) && subtitle != displayName)
+            textStack.Children.Add(Lbl(subtitle, 10, Fg3));
+        Grid.SetColumn(textStack, 1);
+        row.Children.Add(textStack);
+
+        var border = new Border
+        {
+            Child = row,
+            CornerRadius = new CornerRadius(4),
+            Background = B(Windows.UI.Color.FromArgb(0, 0, 0, 0))
+        };
+
+        border.PointerEntered += (s, _) => ((Border)s).Background = B(Hover);
+        border.PointerExited += (s, _) => ((Border)s).Background = B(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+
+        var capturedInsert = insertText;
+        border.PointerPressed += (s, e) =>
+        {
+            if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+            InsertMention(capturedInsert);
+        };
+
+        MentionList.Children.Add(border);
+    }
+
+    private void InsertMention(string mentionText)
+    {
+        var text = MsgInput.Text ?? "";
+        var cursorPos = MsgInput.SelectionStart;
+
+        // Find the @ that started this mention
+        for (int i = cursorPos - 1; i >= 0; i--)
+        {
+            if (text[i] == '@')
+            {
+                // Replace from @ to cursor with the mention text + space
+                var before = text[..i];
+                var after = cursorPos < text.Length ? text[cursorPos..] : "";
+                MsgInput.Text = before + mentionText + " " + after;
+                MsgInput.SelectionStart = (before + mentionText + " ").Length;
+                break;
+            }
+        }
+
+        MentionPopup.Visibility = Visibility.Collapsed;
+        MsgInput.Focus(FocusState.Programmatic);
+    }
+
     private void StartEdit(BeeperMessage m)
     {
         CancelReply();
@@ -1046,6 +1263,27 @@ public sealed partial class MessageView : UserControl
         _editingMessageId = null;
         EditBar.Visibility = Visibility.Collapsed;
         MsgInput.Text = "";
+    }
+
+    private void ShowReactionPicker(BeeperMessage m, Border anchor)
+    {
+        var flyout = new MenuFlyout();
+        var emojis = new[]
+        {
+            "\u2764\uFE0F", "\uD83D\uDC4D", "\uD83D\uDC4E", "\uD83D\uDE02", "\uD83D\uDE4F",
+            "\uD83D\uDE0D", "\uD83D\uDE0E", "\uD83D\uDE2E", "\uD83D\uDE22", "\uD83E\uDD14",
+            "\uD83E\uDD23", "\uD83D\uDE31", "\uD83D\uDE44",
+            "\uD83D\uDC4F", "\uD83D\uDCAA", "\uD83D\uDE4C",
+            "\uD83D\uDD25", "\uD83C\uDF89", "\u2705"
+        };
+        foreach (var emoji in emojis)
+        {
+            var item = new MenuFlyoutItem { Text = emoji };
+            var capturedEmoji = emoji;
+            item.Click += (s, e) => _ = AddReactionAsync(m, capturedEmoji);
+            flyout.Items.Add(item);
+        }
+        flyout.ShowAt(anchor);
     }
 
     private async Task AddReactionAsync(BeeperMessage m, string emoji)
@@ -1096,7 +1334,33 @@ public sealed partial class MessageView : UserControl
 
         if (replyMsg != null)
         {
-            replyText = StripSenderPrefix(replyMsg.Text, replyMsg) ?? $"[{replyMsg.Type}]";
+            replyText = StripSenderPrefix(replyMsg.Text, replyMsg) ?? "";
+            if (string.IsNullOrEmpty(replyText))
+            {
+                if (replyMsg.Attachments?.Count > 0)
+                {
+                    var att = replyMsg.Attachments[0];
+                    replyText = att.IsVoiceNote ? "Voice message"
+                        : att.IsSticker ? "Sticker"
+                        : (att.MimeType ?? "").StartsWith("image/") ? "Photo"
+                        : (att.MimeType ?? "").StartsWith("video/") ? "Video"
+                        : !string.IsNullOrEmpty(att.FileName) ? att.FileName
+                        : "Attachment";
+                }
+                else
+                {
+                    replyText = replyMsg.Type switch
+                    {
+                        "IMAGE" => "Photo",
+                        "VIDEO" => "Video",
+                        "VOICE" or "AUDIO" => "Voice message",
+                        "FILE" => "File",
+                        "STICKER" => "Sticker",
+                        _ => "Message"
+                    };
+                }
+                replyText = $"\U0001F4CE {replyText}";
+            }
             if (replyText.Length > 80) replyText = replyText[..80] + "...";
             replySender = replyMsg.SenderName ?? replyMsg.SenderId;
         }
@@ -1329,25 +1593,13 @@ public sealed partial class MessageView : UserControl
         // Info column
         var infoStack = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
 
-        // Progress slider
+        // WinUI Slider for progress
         var slider = new Slider
         {
             Minimum = 0, Maximum = 100, Value = 0,
-            Height = 24,
+            Height = 28,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            IsEnabled = false,
             Margin = new Thickness(0, 0, 0, 2)
-        };
-        // Disable the built-in tooltip that gets clipped by the parent Border
-        ToolTipService.SetToolTip(slider, null);
-        slider.Loaded += (s, e) =>
-        {
-            try
-            {
-                var thumb = FindDescendant<Microsoft.UI.Xaml.Controls.Primitives.Thumb>(slider);
-                if (thumb != null) ToolTipService.SetToolTip(thumb, null);
-            }
-            catch { }
         };
         infoStack.Children.Add(slider);
 
@@ -1451,7 +1703,12 @@ public sealed partial class MessageView : UserControl
         DispatcherTimer? progressTimer = null;
         bool isPlaying = false;
         bool updatingFromTimer = false;
+        bool seekDragging = false;
         var capturedSrcUrl = srcUrl;
+        double audioDuration = duration > 0 ? duration : 0;
+        var playbackStopwatch = new System.Diagnostics.Stopwatch();
+        double playbackOffset = 0; // track seek offset
+        double playbackSpeed = 1.0;
 
         playBtn.Click += (s, e) =>
         {
@@ -1460,6 +1717,8 @@ public sealed partial class MessageView : UserControl
                 // Pause
                 player.Pause();
                 isPlaying = false;
+                playbackOffset += playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
+                playbackStopwatch.Stop();
                 playIcon.Glyph = "\uE768"; // Play
                 progressTimer?.Stop();
                 return;
@@ -1470,6 +1729,7 @@ public sealed partial class MessageView : UserControl
                 // Resume
                 player.Play();
                 isPlaying = true;
+                playbackStopwatch.Restart();
                 playIcon.Glyph = "\uE769"; // Pause
                 progressTimer?.Start();
                 return;
@@ -1479,61 +1739,135 @@ public sealed partial class MessageView : UserControl
             playIcon.Glyph = "\uE916"; // Loading dots
             playBtn.IsEnabled = false;
 
-            _ = LoadAndPlayAudioAsync(capturedSrcUrl, (loadedPlayer) =>
+            _ = LoadAndPlayAudioAsync(capturedSrcUrl, (loadedPlayer, estDur) =>
             {
-                player = loadedPlayer;
-                player.Volume = volSlider.Value;
-                player.PlaybackSession.PlaybackRate = (double)(speedBtn.Tag ?? 1.0);
-                isPlaying = true;
-                playIcon.Glyph = "\uE769"; // Pause
-                playBtn.IsEnabled = true;
-                slider.IsEnabled = true;
-
-                if (player.PlaybackSession.NaturalDuration.TotalSeconds > 0)
-                    slider.Maximum = player.PlaybackSession.NaturalDuration.TotalSeconds;
-
-                progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-                progressTimer.Tick += (t, te) =>
+                try
                 {
-                    if (player?.PlaybackSession == null) return;
-                    var pos = player.PlaybackSession.Position.TotalSeconds;
-                    var dur = player.PlaybackSession.NaturalDuration.TotalSeconds;
-                    if (dur > 0)
+                    player = loadedPlayer;
+                    try { player.Volume = volSlider.Value; } catch { }
+                    if (audioDuration <= 0 && estDur > 0) audioDuration = estDur;
+                    isPlaying = true;
+                    playIcon.Glyph = "\uE769"; // Pause
+                    playBtn.IsEnabled = true;
+
+                    updatingFromTimer = true;
+                    try { slider.Maximum = audioDuration > 0 ? audioDuration : 100; slider.Value = 0; } catch { }
+                    updatingFromTimer = false;
+
+                    // Show initial duration if known
+                    if (audioDuration > 0)
                     {
-                        slider.Maximum = dur;
-                        updatingFromTimer = true;
-                        slider.Value = pos;
-                        updatingFromTimer = false;
+                        var tm = (int)(audioDuration / 60);
+                        var tsec = (int)(audioDuration % 60);
+                        timeLabel.Text = $"0:00 / {tm}:{tsec:D2}";
+                    }
+
+                    // Try to get real duration when media opens
+                    player.MediaOpened += (p, a) =>
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            try
+                            {
+                                var dur = player.PlaybackSession.NaturalDuration.TotalSeconds;
+                                if (dur > 0)
+                                {
+                                    audioDuration = dur;
+                                    updatingFromTimer = true;
+                                    try { slider.Maximum = dur; } catch { }
+                                    updatingFromTimer = false;
+                                    var tm = (int)(dur / 60);
+                                    var tsec = (int)(dur % 60);
+                                    timeLabel.Text = $"0:00 / {tm}:{tsec:D2}";
+                                }
+                            }
+                            catch { /* PlaybackSession not accessible for OGG — use estimate */ }
+                        });
+                    };
+
+                    player.MediaFailed += (p, a) =>
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            isPlaying = false;
+                            playIcon.Glyph = "\uE768";
+                            progressTimer?.Stop();
+                            playbackStopwatch.Stop();
+                            timeLabel.Text = "Playback failed";
+                        });
+                    };
+
+                    player.MediaEnded += (p, a) =>
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            isPlaying = false;
+                            playIcon.Glyph = "\uE768";
+                            progressTimer?.Stop();
+                            playbackStopwatch.Stop();
+                            playbackOffset = 0;
+                            updatingFromTimer = true;
+                            try { slider.Value = 0; } catch { }
+                            updatingFromTimer = false;
+                            if (audioDuration > 0)
+                            {
+                                var mins = (int)(audioDuration / 60);
+                                var secs = (int)(audioDuration % 60);
+                                timeLabel.Text = $"{mins}:{secs:D2}";
+                            }
+                            else
+                                timeLabel.Text = isVoice ? "Voice message" : (att.FileName ?? "Audio");
+                        });
+                    };
+
+                    progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                    progressTimer.Tick += (t, te) =>
+                    {
+                        if (!isPlaying || player == null) return;
+                        var pos = playbackOffset + playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
+                        if (audioDuration > 0 && pos > audioDuration) pos = audioDuration;
+
+                        // Update slider — use low priority to avoid COM conflicts
+                        if (audioDuration > 0 && !seekDragging)
+                        {
+                            var capturedPos = pos;
+                            updatingFromTimer = true;
+                            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+                            {
+                                try
+                                {
+                                    slider.Maximum = audioDuration;
+                                    slider.Value = capturedPos;
+                                }
+                                catch { }
+                                updatingFromTimer = false;
+                            });
+                        }
+
                         var m = (int)(pos / 60);
                         var sec = (int)(pos % 60);
-                        var tm = (int)(dur / 60);
-                        var tsec = (int)(dur % 60);
-                        timeLabel.Text = $"{m}:{sec:D2} / {tm}:{tsec:D2}";
-                    }
-                };
-                progressTimer.Start();
-
-                player.MediaEnded += (p, a) =>
-                {
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        isPlaying = false;
-                        playIcon.Glyph = "\uE768"; // Play
-                        progressTimer?.Stop();
-                        slider.Value = 0;
-                        player.PlaybackSession.Position = TimeSpan.Zero;
-                        if (duration > 0)
+                        if (audioDuration > 0)
                         {
-                            var mins = (int)(duration / 60);
-                            var secs = (int)(duration % 60);
-                            timeLabel.Text = $"{mins}:{secs:D2}";
+                            var tm = (int)(audioDuration / 60);
+                            var tsec = (int)(audioDuration % 60);
+                            timeLabel.Text = $"{m}:{sec:D2} / {tm}:{tsec:D2}";
                         }
                         else
-                            timeLabel.Text = isVoice ? "Voice message" : (att.FileName ?? "Audio");
-                    });
-                };
+                        {
+                            timeLabel.Text = $"{m}:{sec:D2}";
+                        }
+                    };
+                    progressTimer.Start();
+                    playbackStopwatch.Restart();
 
-                player.Play();
+                    player.Play();
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write($"[AUDIO] onReady crash: {ex.Message}");
+                    playIcon.Glyph = "\uE768";
+                    playBtn.IsEnabled = true;
+                }
             }, () =>
             {
                 playIcon.Glyph = "\uE768";
@@ -1541,12 +1875,14 @@ public sealed partial class MessageView : UserControl
             });
         };
 
-        // Seek — when user moves slider (not from timer update), seek the player
+        // Seek via slider interaction
         slider.ValueChanged += (s, e) =>
         {
-            if (updatingFromTimer) return;
-            if (player != null && player.PlaybackSession.NaturalDuration.TotalSeconds > 0)
-                player.PlaybackSession.Position = TimeSpan.FromSeconds(e.NewValue);
+            if (updatingFromTimer || player == null || audioDuration <= 0) return;
+            playbackOffset = e.NewValue;
+            playbackStopwatch.Restart();
+            try { player.PlaybackSession.Position = TimeSpan.FromSeconds(playbackOffset); }
+            catch { }
         };
 
         // Volume flyout slider
@@ -1555,7 +1891,7 @@ public sealed partial class MessageView : UserControl
         var volPctLabel = (TextBlock)volBtnContent.Children[1];
         volSlider.ValueChanged += (s, e) =>
         {
-            if (player != null) player.Volume = e.NewValue;
+            try { if (player != null) player.Volume = e.NewValue; } catch { }
             var pct = (int)(e.NewValue * 50);
             volPctLabel.Text = $"{pct}%";
             volIcon.Glyph = e.NewValue < 0.01 ? "\uE74F" : "\uE767";
@@ -1568,14 +1904,20 @@ public sealed partial class MessageView : UserControl
             speedLabel.Text = $"{spd}x";
             speedValueLabel.Text = $"{spd}x";
             speedBtn.Tag = spd;
-            if (player != null)
-                player.PlaybackSession.PlaybackRate = spd;
+            // Update local tracking speed — note: MediaPlayer doesn't reliably support
+            // PlaybackRate on all formats, so we track speed manually for the UI
+            if (isPlaying)
+            {
+                playbackOffset += playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
+                playbackStopwatch.Restart();
+            }
+            playbackSpeed = spd;
         };
 
         return outerBorder;
     }
 
-    private async Task LoadAndPlayAudioAsync(string srcUrl, Action<Windows.Media.Playback.MediaPlayer> onReady, Action onFail)
+    private async Task LoadAndPlayAudioAsync(string srcUrl, Action<Windows.Media.Playback.MediaPlayer, double> onReady, Action onFail)
     {
         try
         {
@@ -1620,16 +1962,23 @@ public sealed partial class MessageView : UserControl
             var tempPath = Path.Combine(tempDir, hash + ext);
             await File.WriteAllBytesAsync(tempPath, bytes);
 
+            AppLog.Write($"[AUDIO] Saved {bytes.Length} bytes to {tempPath}");
+
+            var capturedEstDur = 0.0;
             DispatcherQueue.TryEnqueue(() =>
             {
                 try
                 {
                     var player = new Windows.Media.Playback.MediaPlayer();
+                    try { player.CommandManager.IsEnabled = false; } catch { }
                     player.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(tempPath));
-                    onReady(player);
+                    AppLog.Write($"[AUDIO] MediaPlayer created, estDur={capturedEstDur:F1}s");
+                    onReady(player, capturedEstDur);
+                    AppLog.Write($"[AUDIO] onReady completed successfully");
                 }
-                catch
+                catch (Exception ex)
                 {
+                    AppLog.Write($"[AUDIO] MediaPlayer creation failed: {ex.GetType().Name}: {ex.Message}");
                     onFail();
                 }
             });
@@ -2726,12 +3075,79 @@ public sealed partial class MessageView : UserControl
         }
     }
 
+    private static void RenderTextWithQuotes(StackPanel content, string text, bool isOwn)
+    {
+        var lines = text.Split('\n');
+        var quoteLines = new List<string>();
+        var normalLines = new List<string>();
+
+        void FlushNormal()
+        {
+            if (normalLines.Count == 0) return;
+            var joined = string.Join("\n", normalLines);
+            var tb = new TextBlock
+            {
+                FontSize = 14,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = B(isOwn ? SentFg : Fg1),
+                FontFamily = new FontFamily("Segoe UI"),
+                IsTextSelectionEnabled = true
+            };
+            foreach (var inline in ParseMarkdownInlines(joined, isOwn))
+                tb.Inlines.Add(inline);
+            content.Children.Add(tb);
+            normalLines.Clear();
+        }
+
+        void FlushQuote()
+        {
+            if (quoteLines.Count == 0) return;
+            var joined = string.Join("\n", quoteLines);
+            var tb = new TextBlock
+            {
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = B(isOwn ? SentFg : Fg2),
+                FontFamily = new FontFamily("Segoe UI"),
+                FontStyle = Windows.UI.Text.FontStyle.Italic,
+                IsTextSelectionEnabled = true
+            };
+            foreach (var inline in ParseMarkdownInlines(joined, isOwn))
+                tb.Inlines.Add(inline);
+            content.Children.Add(new Border
+            {
+                BorderBrush = B(Accent),
+                BorderThickness = new Thickness(2, 0, 0, 0),
+                Padding = new Thickness(8, 2, 0, 2),
+                Margin = new Thickness(0, 2, 0, 2),
+                Child = tb
+            });
+            quoteLines.Clear();
+        }
+
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("> ") || line == ">")
+            {
+                FlushNormal();
+                quoteLines.Add(line.Length > 2 ? line[2..] : "");
+            }
+            else
+            {
+                FlushQuote();
+                normalLines.Add(line);
+            }
+        }
+        FlushQuote();
+        FlushNormal();
+    }
+
     private static List<Inline> ParseMarkdownInlines(string text, bool isOwn)
     {
         var inlines = new List<Inline>();
         var fgColor = isOwn ? SentFg : Fg1;
 
-        var pattern = @"```([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~";
+        var pattern = @"```([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~|@([\w._-]+(?::[\w.-]+)?)";
         var regex = new Regex(pattern);
 
         int lastIndex = 0;
@@ -2789,6 +3205,16 @@ public sealed partial class MessageView : UserControl
                     Text = match.Groups[5].Value,
                     TextDecorations = Windows.UI.Text.TextDecorations.Strikethrough,
                     Foreground = B(fgColor)
+                });
+            }
+            else if (match.Groups[6].Success)
+            {
+                // @mention — use contrasting color on own messages
+                inlines.Add(new Run
+                {
+                    Text = "@" + match.Groups[6].Value,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = B(isOwn ? Windows.UI.Color.FromArgb(255, 200, 230, 255) : Accent)
                 });
             }
 

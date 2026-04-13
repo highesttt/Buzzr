@@ -17,7 +17,7 @@ import (
 	"maunium.net/go/mautrix/event"
 )
 
-var Version = "0.0.2"
+var Version = "0.0.3"
 
 type Server struct {
 	port   int

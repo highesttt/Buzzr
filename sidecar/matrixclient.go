@@ -1282,6 +1282,56 @@ func (mc *MatrixClient) contentToAttachment(content *event.MessageEventContent, 
 	return att
 }
 
+func (mc *MatrixClient) processMentions(content *event.MessageEventContent, roomID string) {
+	text := content.Body
+	if !strings.Contains(text, "@") {
+		return
+	}
+
+	room := mc.store.GetRoom(roomID)
+	if room == nil {
+		return
+	}
+
+	htmlBody := text
+	var mentionedUserIDs []id.UserID
+	mentionRoom := false
+
+	// Handle @room
+	if strings.Contains(text, "@room") {
+		mentionRoom = true
+		htmlBody = strings.ReplaceAll(htmlBody, "@room", `<strong>@room</strong>`)
+	}
+
+	// Build display name -> user ID mapping from room members
+	members := room.GetMembersSnapshot()
+	for _, member := range members {
+		names := []string{}
+		if member.DisplayName != "" {
+			names = append(names, member.DisplayName)
+		}
+		// Also check without spaces for partial matches
+		for _, name := range names {
+			mention := "@" + name
+			if strings.Contains(text, mention) {
+				userID := id.UserID(member.UserID)
+				mentionedUserIDs = append(mentionedUserIDs, userID)
+				pill := fmt.Sprintf(`<a href="https://matrix.to/#/%s">%s</a>`, member.UserID, name)
+				htmlBody = strings.ReplaceAll(htmlBody, mention, pill)
+			}
+		}
+	}
+
+	if len(mentionedUserIDs) > 0 || mentionRoom {
+		content.Format = event.FormatHTML
+		content.FormattedBody = htmlBody
+		content.Mentions = &event.Mentions{
+			UserIDs: mentionedUserIDs,
+			Room:    mentionRoom,
+		}
+	}
+}
+
 func (mc *MatrixClient) SendMessage(ctx context.Context, roomID, text string, replyTo string) (string, error) {
 	mc.mu.RLock()
 	client := mc.client
@@ -1294,6 +1344,9 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, roomID, text string, re
 		MsgType: event.MsgText,
 		Body:    text,
 	}
+
+	// Convert @mentions to Matrix pills
+	mc.processMentions(content, roomID)
 
 	if replyTo != "" {
 		content.RelatesTo = &event.RelatesTo{
@@ -1479,24 +1532,22 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 	}
 
 	if from != "" && direction == 'b' {
-		// Look up the timestamp of the cursor message from DB, then fetch older messages
-		cursorTs := mc.store.GetTimestampBySortKey(roomID, from)
+		// The cursor from the API is a Matrix pagination token (hex), not a timestamp.
+		// We can't directly map it to DB timestamps.
+		// Instead, try to find a message in DB with this sort_key, or parse it as a timestamp.
+		var cursorTs int64
+
+		// First: check if the cursor is a plain timestamp (matches DB format)
+		if ts, err := strconv.ParseInt(from, 10, 64); err == nil && ts > 1000000000000 {
+			cursorTs = ts
+		}
+
 		if cursorTs > 0 {
 			dbMsgs := mc.store.GetMessagesBeforeFromDB(roomID, cursorTs, limit)
-			if len(dbMsgs) > 0 {
-				var nextCursor string
-				nextCursor = dbMsgs[0].SortKey
-				return dbMsgs, true, nextCursor, nil
-			}
-		}
-		// Also try parsing cursor as a plain timestamp
-		if ts, err := strconv.ParseInt(from, 10, 64); err == nil && ts > 0 {
-			dbMsgs := mc.store.GetMessagesBeforeFromDB(roomID, ts, limit)
 			if len(dbMsgs) > 0 {
 				nextCursor := dbMsgs[0].SortKey
 				return dbMsgs, true, nextCursor, nil
 			}
-			from = ""
 		}
 	}
 

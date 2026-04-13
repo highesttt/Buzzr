@@ -573,6 +573,8 @@ public class BeeperMessage
     [JsonPropertyName("linkedMessageID")] public string? LinkedMessageId { get; set; }
     [JsonPropertyName("attachments")] public List<BeeperAttachment>? Attachments { get; set; }
     [JsonPropertyName("reactions")] public List<BeeperReaction>? Reactions { get; set; }
+    [JsonPropertyName("isEdited")] public bool IsEdited { get; set; }
+    [JsonPropertyName("editedAt")] public string? EditedAt { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 

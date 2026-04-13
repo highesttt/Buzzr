@@ -232,6 +232,18 @@
             </StackPanel>
         </Border>
 
+        <!-- Mention suggestions popup (overlays above composer) -->
+        <Border x:Name="MentionPopup" Grid.Row="2"
+                Background="#2B2B2B" BorderBrush="#3A3A3A"
+                BorderThickness="1" CornerRadius="8"
+                Padding="4" Visibility="Collapsed"
+                VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                Margin="16,0,16,4">
+            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="MentionList" Spacing="0"/>
+            </ScrollViewer>
+        </Border>
+
         <!-- Composer -->
         <Border x:Name="Composer" Grid.Row="6"
                 Background="#242424" BorderBrush="#1A1E20"
