@@ -8,7 +8,6 @@
     <Grid>
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="440">
 
-            <!-- Logo -->
             <Image Source="ms-appx:///Assets/buzzr-logo.png" Width="64" Height="64"
                    HorizontalAlignment="Center" Margin="0,0,0,12"/>
 
@@ -19,7 +18,6 @@
                        Foreground="#A1A1A1" FontFamily="Segoe UI"
                        HorizontalAlignment="Center" Margin="0,0,0,24"/>
 
-            <!-- Auth card -->
             <Border Background="#2B2B2B" BorderBrush="#1A1E20"
                     BorderThickness="1" CornerRadius="8"
                     Padding="24,20,24,20">
@@ -31,7 +29,6 @@
                     <InfoBar x:Name="StatusBar" Severity="Informational" IsOpen="False"
                              IsClosable="False" Margin="0,0,0,4"/>
 
-                    <!-- Email input (step 1) -->
                     <StackPanel x:Name="EmailPanel" Spacing="8">
                         <TextBlock Text="Beeper Email" FontSize="13" FontWeight="SemiBold"
                                    Foreground="#F3F3F3" FontFamily="Segoe UI"/>
@@ -42,7 +39,6 @@
                                 Style="{StaticResource AccentButtonStyle}"/>
                     </StackPanel>
 
-                    <!-- Code input (step 2) -->
                     <StackPanel x:Name="CodePanel" Spacing="8" Visibility="Collapsed">
                         <TextBlock x:Name="CodePromptText"
                                    Text="Enter the code sent to your email"
@@ -57,7 +53,6 @@
                                          FontSize="12"/>
                     </StackPanel>
 
-                    <!-- Device verification (step 3) -->
                     <StackPanel x:Name="RecoveryPanel" Spacing="8" Visibility="Collapsed">
                         <TextBlock Text="Verify your device" FontSize="13" FontWeight="SemiBold"
                                    Foreground="#F3F3F3" FontFamily="Segoe UI"/>
@@ -72,7 +67,6 @@
                                          FontSize="12"/>
                     </StackPanel>
 
-                    <!-- SAS emoji verification panel -->
                     <StackPanel x:Name="VerificationPanel" Spacing="8" Visibility="Collapsed">
                         <TextBlock Text="Device Verification" FontSize="13" FontWeight="SemiBold"
                                    Foreground="#F3F3F3" FontFamily="Segoe UI"/>

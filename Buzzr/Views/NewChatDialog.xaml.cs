@@ -22,7 +22,6 @@ public sealed partial class NewChatDialog : ContentDialog
         _accounts = accounts;
         this.IsPrimaryButtonEnabled = false;
 
-        // Populate accounts
         foreach (var a in _accounts)
         {
             var name = a.Network ?? a.AccountId;
@@ -76,7 +75,6 @@ public sealed partial class NewChatDialog : ContentDialog
 
                 var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
 
-                // Avatar
                 if (!string.IsNullOrEmpty(c.ImgUrl))
                 {
                     try
@@ -137,8 +135,6 @@ public sealed partial class NewChatDialog : ContentDialog
 
     private void OnPrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        // The caller will use SelectedChat to navigate
-        // For now we create a stub chat that can be used
         if (!string.IsNullOrEmpty(_selectedAccountId) && !string.IsNullOrEmpty(_selectedContactId))
         {
             SelectedChat = new BeeperChat
@@ -149,7 +145,6 @@ public sealed partial class NewChatDialog : ContentDialog
                 Type = "single"
             };
 
-            // If there's a first message, send it
             var msgText = FirstMessage.Text?.Trim();
             if (!string.IsNullOrEmpty(msgText))
             {

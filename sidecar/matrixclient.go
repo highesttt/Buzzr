@@ -301,7 +301,6 @@ func (mc *MatrixClient) CompleteLogin(ctx context.Context, email, code string) (
 		return "", fmt.Errorf("crypto init (login): %w", err)
 	}
 
-	// jwt login doesn't always set client.Crypto
 	if client.Crypto == nil {
 		client.Crypto = cryptoHelper
 	}
@@ -358,7 +357,6 @@ func (mc *MatrixClient) Resume(ctx context.Context) error {
 		return fmt.Errorf("crypto init (resume): %w", err)
 	}
 
-	// crypto init may not set client.Crypto on resume
 	if client.Crypto == nil {
 		client.Crypto = cryptoHelper
 	}
@@ -795,7 +793,6 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	// only bump chat for real user messages, not bridge notices/system events
 	isBridgeNoise := msg.Type == "NOTICE" ||
 		strings.Contains(msg.SenderID, "bot:beeper") ||
 		strings.HasSuffix(msg.SenderID, "bot:beeper.local") ||
@@ -1060,8 +1057,6 @@ func (mc *MatrixClient) onSyncResponse(ctx context.Context, resp *mautrix.RespSy
 			if evtTime.After(latestAnyTimestamp) {
 				latestAnyTimestamp = evtTime
 			}
-			// only unencrypted messages set LastActivity here;
-			// encrypted events get handled after decryption in handleMessage
 			if evt.Type == event.EventMessage {
 				if evtTime.After(latestMsgTimestamp) {
 					latestMsgTimestamp = evtTime
@@ -1185,10 +1180,8 @@ func (mc *MatrixClient) eventToMessage(evt *event.Event, room *Room) *Message {
 		msg.Text = content.Body
 		if content.FormattedBody != "" {
 			msg.Text = content.Body
-			// Extract mentions from Matrix HTML pills: <a href="https://matrix.to/#/@user:server">Name</a>
 			msg.Mentions = extractMentionsFromHTML(content.FormattedBody)
 		}
-		// bridges prefix sender name in body
 		if msg.SenderName != "" && strings.HasPrefix(msg.Text, msg.SenderName+": ") {
 			msg.Text = strings.TrimPrefix(msg.Text, msg.SenderName+": ")
 		}
@@ -1263,7 +1256,6 @@ func (mc *MatrixClient) contentToAttachment(content *event.MessageEventContent, 
 		att.ID = string(content.File.URL)
 		if fileJSON, err := json.Marshal(content.File); err == nil {
 			att.EncryptedFileJSON = string(fileJSON)
-			// Persist encryption info so /v1/assets/serve can decrypt
 			if mc.store != nil {
 				mc.store.SaveEncryptedFile(string(content.File.URL), string(fileJSON))
 			}
@@ -1285,11 +1277,8 @@ func (mc *MatrixClient) contentToAttachment(content *event.MessageEventContent, 
 	return att
 }
 
-// extractMentionsFromHTML parses Matrix HTML pills like:
-// <a href="https://matrix.to/#/@user:server">Display Name</a>
 func extractMentionsFromHTML(html string) []MentionInfo {
 	var mentions []MentionInfo
-	// Match <a href="https://matrix.to/#/@user:server">...</a>
 	re := regexp.MustCompile(`<a\s+href="https://matrix\.to/#/([@!][^"]+)"[^>]*>([^<]+)</a>`)
 	matches := re.FindAllStringSubmatch(html, -1)
 	for _, m := range matches {
@@ -1318,20 +1307,17 @@ func (mc *MatrixClient) processMentions(content *event.MessageEventContent, room
 	var mentionedUserIDs []id.UserID
 	mentionRoom := false
 
-	// Handle @room
 	if strings.Contains(text, "@room") {
 		mentionRoom = true
 		htmlBody = strings.ReplaceAll(htmlBody, "@room", `<strong>@room</strong>`)
 	}
 
-	// Build display name -> user ID mapping from room members
 	members := room.GetMembersSnapshot()
 	for _, member := range members {
 		names := []string{}
 		if member.DisplayName != "" {
 			names = append(names, member.DisplayName)
 		}
-		// Also check without spaces for partial matches
 		for _, name := range names {
 			mention := "@" + name
 			if strings.Contains(text, mention) {
@@ -1366,7 +1352,6 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, roomID, text string, re
 		Body:    text,
 	}
 
-	// Convert @mentions to Matrix pills
 	mc.processMentions(content, roomID)
 
 	if replyTo != "" {
@@ -1553,12 +1538,7 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 	}
 
 	if from != "" && direction == 'b' {
-		// The cursor from the API is a Matrix pagination token (hex), not a timestamp.
-		// We can't directly map it to DB timestamps.
-		// Instead, try to find a message in DB with this sort_key, or parse it as a timestamp.
 		var cursorTs int64
-
-		// First: check if the cursor is a plain timestamp (matches DB format)
 		if ts, err := strconv.ParseInt(from, 10, 64); err == nil && ts > 1000000000000 {
 			cursorTs = ts
 		}
@@ -1860,7 +1840,6 @@ func (mc *MatrixClient) seedAccountsFromWhoAmI(raw json.RawMessage) {
 			FullName: "Beeper",
 			IsSelf:   true,
 		}
-		// Fetch user's avatar from Matrix profile
 		if profile, err := mc.client.GetProfile(context.Background(), mc.userID); err == nil && !profile.AvatarURL.IsEmpty() {
 			acctUser.ImgURL = profile.AvatarURL.String()
 			log.Info().Str("avatar", acctUser.ImgURL).Msg("Got user avatar from profile")

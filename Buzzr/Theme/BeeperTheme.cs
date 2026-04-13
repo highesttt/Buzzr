@@ -43,7 +43,7 @@ public static class T
         }
         catch
         {
-            return C("#4CC2FF"); // fallback
+            return C("#4CC2FF");
         }
     }
 
@@ -57,7 +57,6 @@ public static class T
 
     private static Color GetContrastForeground(Color bg)
     {
-        // Use relative luminance to pick black or white text
         var luminance = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B) / 255.0;
         return luminance > 0.5 ? C("#000000") : C("#FFFFFF");
     }

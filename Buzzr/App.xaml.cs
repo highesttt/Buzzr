@@ -33,8 +33,6 @@ public partial class App : Application
             var ex = e.Exception;
             var inner = ex?.InnerException;
             AppLog.Write($"[CRASH] {ex?.GetType().Name}: {ex?.Message} | Source: {ex?.Source}");
-            // Don't mark COM exceptions as handled — let the runtime deal with them
-            // Only handle managed exceptions to prevent non-fatal crashes
             if (ex is not System.Runtime.InteropServices.COMException)
                 e.Handled = true;
         };
@@ -44,7 +42,6 @@ public partial class App : Application
     {
         BeeperApiService.SetBaseUrl(Settings.BaseUrl);
 
-        // Set accent brush to system accent color
         try
         {
             if (Current.Resources["AccentBrush"] is Microsoft.UI.Xaml.Media.SolidColorBrush accentBrush)
@@ -55,7 +52,6 @@ public partial class App : Application
         _window = new Window { Title = "Buzzr" };
         MainWindow = _window;
 
-        // set taskbar icon
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);

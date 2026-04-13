@@ -67,8 +67,6 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-
-        <!-- Header -->
         <Border Grid.Row="0" Background="#242424" BorderBrush="#1A1E20"
                 BorderThickness="0,0,0,1" Padding="20,48,20,12">
             <Grid ColumnSpacing="12">
@@ -97,7 +95,6 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Search in chat button -->
                 <Button x:Name="SearchInChatBtn" Grid.Column="2"
                         Width="32" Height="32" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -108,7 +105,6 @@
             </Grid>
         </Border>
 
-        <!-- In-chat search bar -->
         <Border x:Name="ChatSearchBar" Grid.Row="1" Background="#242424"
                 BorderBrush="#1A1E20" BorderThickness="0,0,0,1"
                 Padding="16,8,16,8" Visibility="Collapsed">
@@ -127,13 +123,11 @@
             </Grid>
         </Border>
 
-        <!-- Messages scroll -->
         <ScrollViewer x:Name="MsgScroll" Grid.Row="2"
                       Padding="16,8,16,8" Visibility="Collapsed">
             <StackPanel x:Name="MsgStack" Spacing="2"/>
         </ScrollViewer>
 
-        <!-- Empty state -->
         <StackPanel x:Name="EmptyState" Grid.Row="2"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Spacing="8">
@@ -147,13 +141,11 @@
                        HorizontalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Loading -->
         <ProgressRing x:Name="LoadingRing" Grid.Row="2"
                       IsActive="False" Width="32" Height="32"
                       HorizontalAlignment="Center" VerticalAlignment="Center"
                       Visibility="Collapsed"/>
 
-        <!-- Edit bar (shown when editing a message) -->
         <Border x:Name="EditBar" Grid.Row="3"
                 Background="#2B2B2B" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,8,16,8"
@@ -176,7 +168,6 @@
             </Grid>
         </Border>
 
-        <!-- Reply bar (shown when replying) -->
         <Border x:Name="ReplyBar" Grid.Row="3"
                 Background="#2B2B2B" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,8,16,8"
@@ -205,7 +196,6 @@
             </Grid>
         </Border>
 
-        <!-- Attachment staging area -->
         <Border x:Name="AttachmentPreview" Grid.Row="4"
                 Background="#2B2B2B" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="12,8,12,8"
@@ -218,7 +208,6 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Scheduled messages indicator -->
         <Border x:Name="ScheduledBar" Grid.Row="5"
                 Background="#2B2B2B" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,6,16,6"
@@ -232,7 +221,6 @@
             </StackPanel>
         </Border>
 
-        <!-- Mention suggestions popup (overlays above composer) -->
         <Border x:Name="MentionPopup" Grid.Row="2"
                 Background="#2B2B2B" BorderBrush="#3A3A3A"
                 BorderThickness="1" CornerRadius="8"
@@ -244,7 +232,6 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Composer -->
         <Border x:Name="Composer" Grid.Row="6"
                 Background="#242424" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,12,16,16"
@@ -259,7 +246,6 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Attach button -->
                 <Button x:Name="AttachBtn" Grid.Column="0"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -274,7 +260,6 @@
                          DragOver="OnDragOver"
                          Drop="OnDrop"/>
 
-                <!-- GIF button -->
                 <Button x:Name="GifBtn" Grid.Column="2"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -282,7 +267,6 @@
                     <TextBlock Text="GIF" FontSize="10" FontWeight="Bold" Foreground="#A1A1A1"/>
                 </Button>
 
-                <!-- Emoji button -->
                 <Button x:Name="EmojiBtn" Grid.Column="3"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -290,7 +274,6 @@
                     <FontIcon Glyph="&#xE76E;" FontSize="16" Foreground="#A1A1A1"/>
                 </Button>
 
-                <!-- Send button -->
                 <Button x:Name="SendBtn" Grid.Column="4"
                         Width="40" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -298,7 +281,6 @@
                     <FontIcon Glyph="&#xE724;" FontSize="16" Foreground="{StaticResource AccentBrush}"/>
                 </Button>
 
-                <!-- Schedule send button -->
                 <Button x:Name="ScheduleBtn" Grid.Column="5"
                         Width="28" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -307,7 +289,6 @@
                 </Button>
             </Grid>
         </Border>
-        <!-- Image Viewer Overlay -->
         <Grid x:Name="ImageOverlay" Grid.RowSpan="7"
               Visibility="Collapsed" Opacity="0">
             <Grid.Background>

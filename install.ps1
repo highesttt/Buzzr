@@ -1,6 +1,3 @@
-# Buzzr Installer
-# Right-click → Run with PowerShell (requires Admin for cert trust)
-
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -13,7 +10,6 @@ if (-not $msix) { Write-Host "No .msix package found" -ForegroundColor Red; paus
 Write-Host "`n  Buzzr Installer" -ForegroundColor Cyan
 Write-Host "  Unofficial Windows client for Beeper`n"
 
-# check admin
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "  Restarting as Administrator..." -ForegroundColor Yellow
@@ -31,7 +27,6 @@ $store.Close()
 Write-Host "  Done" -ForegroundColor Green
 
 Write-Host "  [2/4] Signing package..." -ForegroundColor White
-# find signtool
 $signtool = $null
 $sdkPaths = @(
     "${env:ProgramFiles(x86)}\Windows Kits\10\bin",

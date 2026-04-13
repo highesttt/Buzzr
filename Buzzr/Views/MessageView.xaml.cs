@@ -174,7 +174,6 @@ public sealed partial class MessageView : UserControl
         ScheduleBtn.Click += (s, e) => ShowScheduleFlyout();
 
         ImageOverlayClose.Click += (s, e) => CloseImageOverlay();
-        // Click anywhere except the image itself to close
         ImageOverlay.Tapped += (s, e) =>
         {
             if (e.OriginalSource is Image) return; // clicked on the image — don't close
@@ -182,7 +181,6 @@ public sealed partial class MessageView : UserControl
             if (e.OriginalSource is FontIcon) return; // clicked on button icon — don't close
             CloseImageOverlay();
         };
-        // Escape to close — handle at the UserControl level since Grid doesn't get key focus
         this.KeyDown += (s, e) =>
         {
             if (e.Key == Windows.System.VirtualKey.Escape && ImageOverlay.Visibility == Visibility.Visible)
@@ -191,10 +189,8 @@ public sealed partial class MessageView : UserControl
                 e.Handled = true;
             }
         };
-        // Double-tap on image to toggle zoom
         ImageOverlayImg.DoubleTapped += OnImageOverlayDoubleTapped;
 
-        // Mouse drag to pan when zoomed
         ImageOverlayContainer.PointerPressed += (s, e) =>
         {
             if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
@@ -227,7 +223,6 @@ public sealed partial class MessageView : UserControl
             e.Handled = true;
         };
 
-        // Reset cursor when zoom changes (in case drag ended oddly)
         ImageOverlayScroll.ViewChanged += (s, e) =>
         {
             if (!_imgDragActive)
@@ -262,7 +257,6 @@ public sealed partial class MessageView : UserControl
     {
         _overlayImageUrl = imageUrl;
 
-        // Load full-resolution image (no DecodePixelWidth) for the overlay
         BitmapImage fullRes;
         if (source.UriSource != null)
         {
@@ -299,7 +293,6 @@ public sealed partial class MessageView : UserControl
         ImageOverlay.Visibility = Visibility.Visible;
         ImageOverlay.Opacity = 0;
 
-        // Build context menu
         var menu = new MenuFlyout();
         var copyItem = new MenuFlyoutItem { Text = "Copy image", Icon = new FontIcon { Glyph = "\uE8C8" } };
         copyItem.Click += (s, e) => _ = CopyOverlayImageAsync();
@@ -309,7 +302,6 @@ public sealed partial class MessageView : UserControl
         menu.Items.Add(saveItem);
         ImageOverlayImg.ContextFlyout = menu;
 
-        // Fade in
         var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ImageOverlay);
         var anim = visual.Compositor.CreateScalarKeyFrameAnimation();
         anim.InsertKeyFrame(0f, 0f);
@@ -350,16 +342,13 @@ public sealed partial class MessageView : UserControl
         var currentZoom = ImageOverlayScroll.ZoomFactor;
         if (currentZoom > 1.1f)
         {
-            // Zoomed in — reset to fit
             ImageOverlayScroll.ChangeView(null, null, 1f);
         }
         else
         {
-            // Fit view — zoom to 3x centered on the tap point
             var tapPos = e.GetPosition(ImageOverlayContainer);
             var targetZoom = 3f;
 
-            // Calculate scroll offsets to center the tap point after zoom
             var viewW = ImageOverlayScroll.ViewportWidth;
             var viewH = ImageOverlayScroll.ViewportHeight;
             var scrollX = tapPos.X * targetZoom - viewW / 2;
@@ -376,7 +365,6 @@ public sealed partial class MessageView : UserControl
     {
         try
         {
-            // Try to get the temp file path from the image source
             string? filePath = null;
             if (ImageOverlayImg.Source is BitmapImage bmp && bmp.UriSource != null)
                 filePath = bmp.UriSource.LocalPath;
@@ -489,7 +477,6 @@ public sealed partial class MessageView : UserControl
             if (MsgStack.Children[^1] is FrameworkElement newBubble)
                 AnimateBubbleIn(newBubble);
 
-            // Only auto-scroll if user is near the bottom, or it's their own message
             var distFromBottom = MsgScroll.ScrollableHeight - MsgScroll.VerticalOffset;
             if (distFromBottom < 150 || msg.IsSender)
                 ScrollToBottom();
@@ -700,7 +687,6 @@ public sealed partial class MessageView : UserControl
                 _msgCursor = response.OldestCursor ?? response.Cursor ?? olderSorted.FirstOrDefault()?.SortKey;
                 _msgHasMore = response.HasMore;
 
-                // Deduplicate — only add messages not already in the map
                 var newMessages = response.Messages.Where(m => !_messageMap.ContainsKey(m.Id)).ToList();
                 _allMessages.InsertRange(0, newMessages);
                 foreach (var m in newMessages)
@@ -781,7 +767,6 @@ public sealed partial class MessageView : UserControl
             if (string.IsNullOrEmpty(m.Text) && (m.Attachments == null || m.Attachments.Count == 0)
                 && m.Type == "TEXT") continue;
 
-            // Skip standalone URL-only messages (GIF/media links from bridges)
             if (ShouldSkipMessage(m)) continue;
 
             var dateStr = DateHeader(m.Timestamp);
@@ -912,13 +897,11 @@ public sealed partial class MessageView : UserControl
             });
         }
 
-        // Timestamp + edited indicator
         var timeStr = MessageTime(m.Timestamp);
         if (m.IsEdited) timeStr += "  (edited)";
         content.Children.Add(Lbl(timeStr, 10, isOwn ? SentFg : Fg3,
             margin: new Thickness(0, 2, 0, 0)));
 
-        // Clickable reactions
         if (m.Reactions?.Count > 0)
         {
             var rxRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
@@ -943,7 +926,6 @@ public sealed partial class MessageView : UserControl
                 };
                 rxRow.Children.Add(rxBorder);
             }
-            // "+" button to add new reaction
             var addBtn = new Border
             {
                 Background = B(Surface),
@@ -961,7 +943,6 @@ public sealed partial class MessageView : UserControl
             content.Children.Add(rxRow);
         }
 
-        // If bubble has no real content (only timestamp + maybe sender label), collapse it
         var minChildren = 1 + (showSender ? 1 : 0) + (!string.IsNullOrEmpty(m.LinkedMessageId) ? 1 : 0);
         if (content.Children.Count <= minChildren)
         {
@@ -1096,13 +1077,11 @@ public sealed partial class MessageView : UserControl
         var cursorPos = MsgInput.SelectionStart;
         if (cursorPos <= 0 || cursorPos > text.Length) return null;
 
-        // Walk back from cursor to find '@'
         var searchStart = cursorPos - 1;
         for (int i = searchStart; i >= 0; i--)
         {
             if (text[i] == '@')
             {
-                // Make sure @ is at start or preceded by space/newline
                 if (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\n')
                     return text[(i + 1)..cursorPos];
                 return null;
@@ -1124,7 +1103,6 @@ public sealed partial class MessageView : UserControl
         MentionList.Children.Clear();
         var queryLower = query.ToLowerInvariant();
 
-        // Add participants first (filter out bots and self)
         foreach (var p in _participantMap.Values)
         {
             if (p.IsSelf) continue;
@@ -1141,7 +1119,6 @@ public sealed partial class MessageView : UserControl
             }
         }
 
-        // Add @room at the end
         if ("room".Contains(queryLower) || queryLower.Length == 0)
         {
             AddMentionItem("@room", "Notify everyone", "\uE716", "@room");
@@ -1230,12 +1207,10 @@ public sealed partial class MessageView : UserControl
         var text = MsgInput.Text ?? "";
         var cursorPos = MsgInput.SelectionStart;
 
-        // Find the @ that started this mention
         for (int i = cursorPos - 1; i >= 0; i--)
         {
             if (text[i] == '@')
             {
-                // Replace from @ to cursor with the mention text + space
                 var before = text[..i];
                 var after = cursorPos < text.Length ? text[cursorPos..] : "";
                 MsgInput.Text = before + mentionText + " " + after;
@@ -1437,7 +1412,6 @@ public sealed partial class MessageView : UserControl
 
         if (mimeType.StartsWith("video/") || attType == "VIDEO")
         {
-            // Check if this is actually a GIF disguised as video (Tenor, Giphy, etc.)
             var fn = (att.FileName ?? "").ToLowerInvariant();
             bool isGifVideo = att.IsGif
                 || fn.Contains("tenor.com") || fn.Contains("giphy.com")
@@ -1574,7 +1548,6 @@ public sealed partial class MessageView : UserControl
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        // Play/pause button
         var playIcon = new FontIcon { Glyph = "\uE768", FontSize = 14, Foreground = B(isOwn ? SentFg : Accent) };
         var playBtn = new Button
         {
@@ -1590,10 +1563,8 @@ public sealed partial class MessageView : UserControl
         Grid.SetColumn(playBtn, 0);
         row.Children.Add(playBtn);
 
-        // Info column
         var infoStack = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
 
-        // WinUI Slider for progress
         var slider = new Slider
         {
             Minimum = 0, Maximum = 100, Value = 0,
@@ -1603,7 +1574,6 @@ public sealed partial class MessageView : UserControl
         };
         infoStack.Children.Add(slider);
 
-        // Duration / label
         var durationStr = isVoice ? "Voice message" : (att.FileName ?? "Audio");
         if (duration > 0)
         {
@@ -1613,11 +1583,9 @@ public sealed partial class MessageView : UserControl
         }
         var timeLabel = Lbl(durationStr, 10, isOwn ? SentFg : Fg3);
 
-        // Bottom row: time | volume button | speed button
         var bottomRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         bottomRow.Children.Add(timeLabel);
 
-        // Volume button with flyout containing slider
         var volBtn = new Button
         {
             Content = new StackPanel
@@ -1652,7 +1620,6 @@ public sealed partial class MessageView : UserControl
         volBtn.Flyout = volFlyout;
         bottomRow.Children.Add(volBtn);
 
-        // Speed button with flyout containing step slider
         var speedLabel = Lbl("1x", 10, isOwn ? SentFg : Fg2);
         var speedBtn = new Button
         {
@@ -1698,7 +1665,6 @@ public sealed partial class MessageView : UserControl
         if (string.IsNullOrEmpty(srcUrl))
             return outerBorder;
 
-        // Audio playback state
         Windows.Media.Playback.MediaPlayer? player = null;
         DispatcherTimer? progressTimer = null;
         bool isPlaying = false;
@@ -1714,7 +1680,6 @@ public sealed partial class MessageView : UserControl
         {
             if (isPlaying && player != null)
             {
-                // Pause
                 player.Pause();
                 isPlaying = false;
                 playbackOffset += playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
@@ -1726,7 +1691,6 @@ public sealed partial class MessageView : UserControl
 
             if (player != null)
             {
-                // Resume
                 player.Play();
                 isPlaying = true;
                 playbackStopwatch.Restart();
@@ -1735,7 +1699,6 @@ public sealed partial class MessageView : UserControl
                 return;
             }
 
-            // First play — load audio
             playIcon.Glyph = "\uE916"; // Loading dots
             playBtn.IsEnabled = false;
 
@@ -1754,7 +1717,6 @@ public sealed partial class MessageView : UserControl
                     try { slider.Maximum = audioDuration > 0 ? audioDuration : 100; slider.Value = 0; } catch { }
                     updatingFromTimer = false;
 
-                    // Show initial duration if known
                     if (audioDuration > 0)
                     {
                         var tm = (int)(audioDuration / 60);
@@ -1762,7 +1724,6 @@ public sealed partial class MessageView : UserControl
                         timeLabel.Text = $"0:00 / {tm}:{tsec:D2}";
                     }
 
-                    // Try to get real duration when media opens
                     player.MediaOpened += (p, a) =>
                     {
                         DispatcherQueue.TryEnqueue(() =>
@@ -1827,7 +1788,6 @@ public sealed partial class MessageView : UserControl
                         var pos = playbackOffset + playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
                         if (audioDuration > 0 && pos > audioDuration) pos = audioDuration;
 
-                        // Update slider — use low priority to avoid COM conflicts
                         if (audioDuration > 0 && !seekDragging)
                         {
                             var capturedPos = pos;
@@ -1875,7 +1835,6 @@ public sealed partial class MessageView : UserControl
             });
         };
 
-        // Seek via slider interaction
         slider.ValueChanged += (s, e) =>
         {
             if (updatingFromTimer || player == null || audioDuration <= 0) return;
@@ -1885,7 +1844,6 @@ public sealed partial class MessageView : UserControl
             catch { }
         };
 
-        // Volume flyout slider
         var volBtnContent = (StackPanel)volBtn.Content;
         var volIcon = (FontIcon)volBtnContent.Children[0];
         var volPctLabel = (TextBlock)volBtnContent.Children[1];
@@ -1897,15 +1855,12 @@ public sealed partial class MessageView : UserControl
             volIcon.Glyph = e.NewValue < 0.01 ? "\uE74F" : "\uE767";
         };
 
-        // Speed flyout slider
         speedSlider.ValueChanged += (s, e) =>
         {
             var spd = Math.Round(e.NewValue, 2);
             speedLabel.Text = $"{spd}x";
             speedValueLabel.Text = $"{spd}x";
             speedBtn.Tag = spd;
-            // Update local tracking speed — note: MediaPlayer doesn't reliably support
-            // PlaybackRate on all formats, so we track speed manually for the UI
             if (isPlaying)
             {
                 playbackOffset += playbackStopwatch.Elapsed.TotalSeconds * playbackSpeed;
@@ -1921,7 +1876,6 @@ public sealed partial class MessageView : UserControl
     {
         try
         {
-            // Extract mxc URI and resolve via API (same as images)
             var mxcUri = ExtractMxcUri(srcUrl);
             string? resolvedUrl = null;
 
@@ -1935,7 +1889,6 @@ public sealed partial class MessageView : UserControl
                 catch { }
             }
 
-            // Download bytes (sidecar decrypts via serve endpoint now)
             var downloadUrl = resolvedUrl ?? srcUrl;
             var bytes = await Task.Run(() =>
             {
@@ -1947,7 +1900,6 @@ public sealed partial class MessageView : UserControl
                 return http.GetByteArrayAsync(downloadUrl).GetAwaiter().GetResult();
             });
 
-            // Save to temp and play
             var tempDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Buzzr", "audio_cache");
@@ -2049,8 +2001,6 @@ public sealed partial class MessageView : UserControl
 
         if (urlToLoad != null)
         {
-            // BitmapImage can't load http://localhost in WinUI 3 (E_NETWORK_ERROR),
-            // so go straight to stream download for localhost URLs
             if (urlToLoad.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase)
                 || urlToLoad.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase))
             {
@@ -2154,7 +2104,6 @@ public sealed partial class MessageView : UserControl
         {
             try
             {
-                // Download and decrypt like images
                 var mxcUri = ExtractMxcUri(capturedSrcUrl);
                 string? resolvedUrl = null;
                 if (!string.IsNullOrEmpty(mxcUri))
@@ -2229,7 +2178,6 @@ public sealed partial class MessageView : UserControl
 
     private static string? ExtractMxcUri(string url)
     {
-        // Extract mxc:// URI from serve URL like http://localhost:29110/v1/assets/serve?uri=mxc://...
         try
         {
             var uri = new Uri(url);
@@ -2246,7 +2194,6 @@ public sealed partial class MessageView : UserControl
     {
         try
         {
-            // Extract mxc URI and call the proper download API to get a decrypted URL
             var mxcUri = ExtractMxcUri(url);
             string? resolvedUrl = null;
 
@@ -2265,7 +2212,6 @@ public sealed partial class MessageView : UserControl
                 }
             }
 
-            // If API gave us a non-localhost URL, try BitmapImage directly
             if (!string.IsNullOrEmpty(resolvedUrl)
                 && !resolvedUrl.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase)
                 && !resolvedUrl.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase))
@@ -2274,7 +2220,6 @@ public sealed partial class MessageView : UserControl
                 return;
             }
 
-            // Fall back: download bytes (from resolved URL or original) and save to temp file
             var downloadUrl = resolvedUrl ?? url;
             AppLog.Write($"[IMG] Downloading bytes from: {downloadUrl.Substring(0, Math.Min(downloadUrl.Length, 80))}");
 
@@ -2290,7 +2235,6 @@ public sealed partial class MessageView : UserControl
 
             AppLog.Write($"[IMG] Downloaded {bytes.Length} bytes, first bytes: {(bytes.Length >= 4 ? $"{bytes[0]:X2} {bytes[1]:X2} {bytes[2]:X2} {bytes[3]:X2}" : "too short")}");
 
-            // Check if the bytes are actually an image
             bool isValidImage = bytes.Length > 8 && (
                 (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) || // PNG
                 (bytes[0] == 0xFF && bytes[1] == 0xD8) || // JPEG
@@ -2301,7 +2245,6 @@ public sealed partial class MessageView : UserControl
             if (!isValidImage)
             {
                 AppLog.Write($"[IMG] Downloaded data is NOT a valid image format, trying API download with auth...");
-                // The serve endpoint returned encrypted data, try downloading with auth
                 if (!string.IsNullOrEmpty(mxcUri))
                 {
                     bytes = await Task.Run(() =>
@@ -2506,9 +2449,6 @@ public sealed partial class MessageView : UserControl
 
         var trimmed = text.Trim();
 
-        // Check if text exactly matches any attachment filename — but only if
-        // the filename actually looks like a real filename (has a file extension).
-        // Some bridges set the filename to the message text, which would incorrectly suppress it.
         foreach (var att in m.Attachments)
         {
             if (!string.IsNullOrEmpty(att.FileName) &&
@@ -2517,7 +2457,6 @@ public sealed partial class MessageView : UserControl
                 return true;
         }
 
-        // Check if text looks like a bare filename for media/file type messages
         if (m.Type is "IMAGE" or "VIDEO" or "FILE" or "STICKER" or "VOICE" or "AUDIO")
         {
             var ext = Path.GetExtension(trimmed).ToLowerInvariant();
@@ -2528,8 +2467,6 @@ public sealed partial class MessageView : UserControl
                 return true;
         }
 
-        // Check if text is ONLY a URL (e.g., tenor links for GIFs, discord CDN links)
-        // Only suppress if the entire text is a single URL — don't suppress real messages that contain URLs
         if (m.Attachments.Count > 0 && !trimmed.Contains(' ') &&
             (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
              trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
@@ -2540,7 +2477,6 @@ public sealed partial class MessageView : UserControl
 
     private bool ShouldSkipMessage(BeeperMessage m)
     {
-        // Skip text-only messages that are just a media URL (bridges send these alongside the attachment message)
         if ((m.Attachments == null || m.Attachments.Count == 0) && !string.IsNullOrEmpty(m.Text))
         {
             var raw = m.Text.Trim();
@@ -2554,15 +2490,12 @@ public sealed partial class MessageView : UserControl
 
     private static bool ContainsMediaUrl(string text)
     {
-        // Check if text is "SomeName: <media URL>" or just a media URL with any prefix
-        // Only match if after removing a possible "word: " prefix, the rest is a single media URL
         var colonIdx = text.IndexOf(": ");
         if (colonIdx > 0 && colonIdx < 40)
         {
             var afterColon = text[(colonIdx + 2)..].Trim();
             if (IsMediaUrl(afterColon)) return true;
         }
-        // Also check if the text just contains a known media domain and nothing else meaningful
         if (!text.Contains(' ') && !text.Contains('\n'))
         {
             if (text.Contains("tenor.com/", StringComparison.OrdinalIgnoreCase)
@@ -2577,7 +2510,6 @@ public sealed partial class MessageView : UserControl
     private static bool IsMediaUrl(string text)
     {
         var trimmed = text.Trim();
-        // Only suppress if the entire text is a single URL to a known media host
         if (trimmed.Contains(' ') || trimmed.Contains('\n')) return false;
         if (!trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
             !trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -3155,7 +3087,6 @@ public sealed partial class MessageView : UserControl
         var inlines = new List<Inline>();
         var fgColor = isOwn ? SentFg : Fg1;
 
-        // No @mention regex here — mentions are handled separately below after markdown parsing
         var pattern = @"```([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~";
         var regex = new Regex(pattern);
 
@@ -3234,8 +3165,6 @@ public sealed partial class MessageView : UserControl
             inlines.Add(new Run { Text = text, Foreground = B(fgColor) });
         }
 
-        // Post-process: highlight mentions
-        // Primary: use API-provided mention data; Fallback: detect @participant patterns
         var mentionDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool fromApi = mentions != null && mentions.Count > 0;
         if (fromApi)
@@ -3252,7 +3181,6 @@ public sealed partial class MessageView : UserControl
             }
         }
 
-        // Fallback: if no API mentions but text contains @, try matching @participant_name
         if (!fromApi && text.Contains('@'))
         {
             foreach (var p in _participantMap.Values)
@@ -3271,7 +3199,6 @@ public sealed partial class MessageView : UserControl
         var processed = new List<Inline>();
         foreach (var inline in inlines)
         {
-            // Skip non-Run inlines and code spans (monospace font)
             if (inline is not Run run ||
                 (run.FontFamily?.Source?.Contains("Cascadia", StringComparison.OrdinalIgnoreCase) == true) ||
                 (run.FontFamily?.Source?.Contains("Consolas", StringComparison.OrdinalIgnoreCase) == true))
@@ -3284,18 +3211,15 @@ public sealed partial class MessageView : UserControl
             int pos = 0;
             bool hadMention = false;
 
-            // Find mentions in the text
             foreach (var name in mentionDisplayNames)
             {
                 if (string.IsNullOrEmpty(name)) continue;
 
                 if (fromApi)
                 {
-                    // API mentions: find the display name in text
                     var idx = runText.IndexOf(name, pos, StringComparison.OrdinalIgnoreCase);
                     if (idx < 0) continue;
 
-                    // Include preceding @ if present (text may have "@Name" or just "Name")
                     var matchStart = idx;
                     if (matchStart > 0 && runText[matchStart - 1] == '@')
                         matchStart--;
@@ -3305,7 +3229,6 @@ public sealed partial class MessageView : UserControl
                         processed.Add(new Run { Text = runText[pos..matchStart], Foreground = run.Foreground });
 
                     var matchText = runText[matchStart..(idx + name.Length)];
-                    // Ensure it starts with @ for display
                     if (!matchText.StartsWith('@')) matchText = "@" + matchText;
                     var mentionRun = new Run
                     {
@@ -3319,7 +3242,6 @@ public sealed partial class MessageView : UserControl
                 }
                 else
                 {
-                    // Fallback: look for @name pattern
                     var searchFor = "@" + name;
                     var idx = runText.IndexOf(searchFor, pos, StringComparison.OrdinalIgnoreCase);
                     if (idx < 0) continue;

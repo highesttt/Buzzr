@@ -10,7 +10,6 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Top bar: back + "Settings" label + search with icon on left -->
         <Grid Height="48" Padding="8,0,16,0">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="BackBtn"
@@ -41,7 +40,6 @@
             </Grid>
         </Grid>
 
-        <!-- NavigationView -->
         <NavigationView x:Name="NavView" Grid.Row="1"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
@@ -111,7 +109,6 @@
                                Margin="0,0,0,12"/>
                     <StackPanel x:Name="ContentArea" Spacing="8">
 
-                        <!-- Profile -->
                         <StackPanel x:Name="ProfilePanel" Spacing="8">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -176,7 +173,6 @@
                                     CornerRadius="4"/>
                         </StackPanel>
 
-                        <!-- Preferences -->
                         <StackPanel x:Name="PreferencesPanel" Spacing="8" Visibility="Collapsed">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -199,7 +195,6 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- Storage -->
                         <StackPanel x:Name="StoragePanel" Spacing="8" Visibility="Collapsed">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -238,7 +233,6 @@
                                     CornerRadius="4"/>
                         </StackPanel>
 
-                        <!-- About -->
                         <StackPanel x:Name="AboutPanel" Spacing="8" Visibility="Collapsed">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"

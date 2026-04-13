@@ -13,7 +13,6 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Sidebar -->
         <Border Grid.Column="0" BorderThickness="0">
             <Grid Background="#E6242424">
                 <Grid.RowDefinitions>
@@ -23,10 +22,8 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- Title bar spacer -->
                 <Border Grid.Row="0" Height="44"/>
 
-                <!-- All chats icon -->
                 <Button x:Name="AllChatsBtn" Grid.Row="1"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -35,7 +32,6 @@
                     <FontIcon Glyph="&#xE8BD;" FontSize="16" Foreground="{StaticResource AccentBrush}"/>
                 </Button>
 
-                <!-- Account icons -->
                 <ScrollViewer Grid.Row="2"
                               VerticalScrollBarVisibility="Hidden"
                               HorizontalAlignment="Center"
@@ -49,7 +45,6 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- Settings gear -->
                 <Button x:Name="SettingsBtn" Grid.Row="3"
                         Width="36" Height="36" Padding="0"
                         Background="Transparent" BorderThickness="0"
@@ -84,13 +79,11 @@
             </Grid>
         </Border>
 
-        <!-- Chat list -->
         <Border Grid.Column="1" BorderBrush="#1A1E20" BorderThickness="0,0,1,0"
                 Background="#E6242424">
             <local:ChatListControl x:Name="ChatList"/>
         </Border>
 
-        <!-- Messages -->
         <local:MessageView x:Name="MessagePanel" Grid.Column="2"/>
     </Grid>
 </Page>

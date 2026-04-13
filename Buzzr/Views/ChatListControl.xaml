@@ -68,7 +68,6 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Header -->
         <Grid Grid.Row="0" Margin="16,48,16,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -84,12 +83,10 @@
             </Button>
         </Grid>
 
-        <!-- Search -->
         <TextBox x:Name="SearchBox" Grid.Row="1"
                  PlaceholderText="Search chats... (Ctrl+K)"
                  Margin="8,0,8,4"/>
 
-        <!-- Tab filters -->
         <StackPanel x:Name="TabBar" Grid.Row="2" Orientation="Horizontal"
                     Spacing="0" Margin="8,4,8,8">
             <Button x:Name="TabAll" Content="All" Style="{StaticResource NoFlickerButton}"
@@ -104,12 +101,10 @@
                     CornerRadius="0,4,4,0"/>
         </StackPanel>
 
-        <!-- Chat list -->
         <ScrollViewer x:Name="ChatScroll" Grid.Row="3" Padding="4,0,4,4">
             <StackPanel x:Name="ListStack" Spacing="1"/>
         </ScrollViewer>
 
-        <!-- Loading overlay -->
         <StackPanel x:Name="LoadingPanel" Grid.Row="3"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Spacing="12">

@@ -296,11 +296,9 @@ func (s *Server) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	base := s.baseURL()
 	for i, a := range accounts {
 		apiAcct := AccountToAPIAccount(a)
-		// Proxy mxc:// avatar URLs through sidecar
 		if strings.HasPrefix(apiAcct.User.ImgURL, "mxc://") {
 			apiAcct.User.ImgURL = fmt.Sprintf("%s/v1/assets/serve?uri=%s", base, url.QueryEscape(apiAcct.User.ImgURL))
 		}
-		// Fallback: find avatar from room member data if still missing
 		if a.AccountID == "hungryserv" && apiAcct.User.ImgURL == "" && a.User != nil {
 			rooms := s.store.GetRoomsFiltered("", nil, nil, nil, nil)
 			for _, room := range rooms {
@@ -814,7 +812,6 @@ func (s *Server) handleServeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up encryption info for this mxc URI from stored attachments
 	encFileJSON := s.store.GetEncryptedFileJSON(uri)
 
 	data, contentType, err := s.mc.DownloadMedia(r.Context(), uri)
@@ -823,7 +820,6 @@ func (s *Server) handleServeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt if we have encryption info
 	if encFileJSON != "" {
 		var encFile event.EncryptedFileInfo
 		if jsonErr := json.Unmarshal([]byte(encFileJSON), &encFile); jsonErr == nil {

@@ -594,7 +594,6 @@ public sealed partial class ChatListControl : UserControl
                     parentGrid.Children.RemoveAt(fromIdx);
                     parentGrid.Children.Insert(toIdx, child);
 
-                    // update grid positions
                     const int cols = 3;
                     for (int idx = 0; idx < parentGrid.Children.Count; idx++)
                     {
@@ -602,7 +601,6 @@ public sealed partial class ChatListControl : UserControl
                         Grid.SetRow((FrameworkElement)parentGrid.Children[idx], idx / cols);
                     }
 
-                    // save order from current visual order
                     var ids = parentGrid.Children
                         .OfType<Border>()
                         .Select(b => b.Tag as string)

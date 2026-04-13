@@ -107,7 +107,6 @@ func (s *SQLiteStore) createTables() error {
 		return err
 	}
 
-	// Migrate: add mentions_json column if missing
 	s.db.Exec("ALTER TABLE messages ADD COLUMN mentions_json TEXT")
 
 	return nil
@@ -533,14 +532,12 @@ func (s *SQLiteStore) GetEncryptedFileJSON(mxcURI string) string {
 		return ""
 	}
 
-	// Fast lookup from dedicated table
 	var fileJSON sql.NullString
 	err := s.db.QueryRow("SELECT file_json FROM encrypted_files WHERE mxc_uri = ?", mxcURI).Scan(&fileJSON)
 	if err == nil && fileJSON.Valid && fileJSON.String != "" {
 		return fileJSON.String
 	}
 
-	// Fallback: search through message attachments
 	rows, err := s.db.Query("SELECT attachments_json FROM messages WHERE attachments_json LIKE ? LIMIT 50", "%"+mxcURI+"%")
 	if err != nil {
 		return ""
@@ -558,7 +555,6 @@ func (s *SQLiteStore) GetEncryptedFileJSON(mxcURI string) string {
 		}
 		for _, att := range attachments {
 			if att.SrcURL == mxcURI && att.EncryptedFileJSON != "" {
-				// Cache it for next time
 				s.SaveEncryptedFile(mxcURI, att.EncryptedFileJSON)
 				return att.EncryptedFileJSON
 			}
