@@ -865,7 +865,7 @@ public sealed partial class ChatListControl : UserControl
                 Width = size,
                 Height = size,
                 CornerRadius = new CornerRadius(size / 2),
-                Background = B(Windows.UI.Color.FromArgb(255, 76, 194, 255)),
+                Background = B(Accent),
                 Child = new FontIcon
                 {
                     Glyph = "\uE70B",

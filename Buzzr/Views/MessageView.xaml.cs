@@ -888,7 +888,7 @@ public sealed partial class MessageView : UserControl
         var isAttFn = !string.IsNullOrEmpty(text) && (IsAttachmentFilename(text, m) || IsMediaUrl(text));
         if (!string.IsNullOrEmpty(text) && !isAttFn)
         {
-            RenderTextWithQuotes(content, text, isOwn);
+            RenderTextWithQuotes(content, text, isOwn, m.Mentions);
         }
         else if ((m.Attachments == null || m.Attachments.Count == 0) && !isAttFn)
         {
@@ -2026,7 +2026,9 @@ public sealed partial class MessageView : UserControl
             Margin = new Thickness(0, 2, 0, 2),
             MinWidth = Math.Min(width > 0 ? width : 200, 300),
             MinHeight = Math.Min(height > 0 ? height : 100, 300),
-            Background = B(isOwn ? AccentDark : Surface)
+            MaxWidth = 300,
+            Background = B(isOwn ? AccentDark : Surface),
+            HorizontalAlignment = HorizontalAlignment.Left
         };
 
         var placeholder = new ProgressRing
@@ -2504,10 +2506,13 @@ public sealed partial class MessageView : UserControl
 
         var trimmed = text.Trim();
 
-        // Check if text exactly matches any attachment filename
+        // Check if text exactly matches any attachment filename — but only if
+        // the filename actually looks like a real filename (has a file extension).
+        // Some bridges set the filename to the message text, which would incorrectly suppress it.
         foreach (var att in m.Attachments)
         {
             if (!string.IsNullOrEmpty(att.FileName) &&
+                !string.IsNullOrEmpty(System.IO.Path.GetExtension(att.FileName)) &&
                 string.Equals(trimmed, att.FileName, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
@@ -2523,14 +2528,11 @@ public sealed partial class MessageView : UserControl
                 return true;
         }
 
-        // Check if text is or contains a URL (e.g., tenor links for GIFs, discord CDN links)
-        if (m.Attachments.Count > 0 &&
+        // Check if text is ONLY a URL (e.g., tenor links for GIFs, discord CDN links)
+        // Only suppress if the entire text is a single URL — don't suppress real messages that contain URLs
+        if (m.Attachments.Count > 0 && !trimmed.Contains(' ') &&
             (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.Contains("tenor.com/", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.Contains("giphy.com/", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.Contains("cdn.discordapp.com/", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.Contains("media.discordapp.net/", StringComparison.OrdinalIgnoreCase)))
+             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
             return true;
 
         return false;
@@ -3075,7 +3077,7 @@ public sealed partial class MessageView : UserControl
         }
     }
 
-    private static void RenderTextWithQuotes(StackPanel content, string text, bool isOwn)
+    private void RenderTextWithQuotes(StackPanel content, string text, bool isOwn, List<BeeperMention>? mentions = null)
     {
         var lines = text.Split('\n');
         var quoteLines = new List<string>();
@@ -3093,7 +3095,7 @@ public sealed partial class MessageView : UserControl
                 FontFamily = new FontFamily("Segoe UI"),
                 IsTextSelectionEnabled = true
             };
-            foreach (var inline in ParseMarkdownInlines(joined, isOwn))
+            foreach (var inline in ParseMarkdownInlines(joined, isOwn, mentions))
                 tb.Inlines.Add(inline);
             content.Children.Add(tb);
             normalLines.Clear();
@@ -3112,7 +3114,7 @@ public sealed partial class MessageView : UserControl
                 FontStyle = Windows.UI.Text.FontStyle.Italic,
                 IsTextSelectionEnabled = true
             };
-            foreach (var inline in ParseMarkdownInlines(joined, isOwn))
+            foreach (var inline in ParseMarkdownInlines(joined, isOwn, mentions))
                 tb.Inlines.Add(inline);
             content.Children.Add(new Border
             {
@@ -3142,12 +3144,13 @@ public sealed partial class MessageView : UserControl
         FlushNormal();
     }
 
-    private static List<Inline> ParseMarkdownInlines(string text, bool isOwn)
+    private List<Inline> ParseMarkdownInlines(string text, bool isOwn, List<BeeperMention>? mentions = null)
     {
         var inlines = new List<Inline>();
         var fgColor = isOwn ? SentFg : Fg1;
 
-        var pattern = @"```([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~|@([\w._-]+(?::[\w.-]+)?)";
+        // No @mention regex here — mentions are handled separately below after markdown parsing
+        var pattern = @"```([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~";
         var regex = new Regex(pattern);
 
         int lastIndex = 0;
@@ -3207,16 +3210,6 @@ public sealed partial class MessageView : UserControl
                     Foreground = B(fgColor)
                 });
             }
-            else if (match.Groups[6].Success)
-            {
-                // @mention — use contrasting color on own messages
-                inlines.Add(new Run
-                {
-                    Text = "@" + match.Groups[6].Value,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = B(isOwn ? Windows.UI.Color.FromArgb(255, 200, 230, 255) : Accent)
-                });
-            }
 
             lastIndex = match.Index + match.Length;
         }
@@ -3235,7 +3228,123 @@ public sealed partial class MessageView : UserControl
             inlines.Add(new Run { Text = text, Foreground = B(fgColor) });
         }
 
-        return inlines;
+        // Post-process: highlight mentions
+        // Primary: use API-provided mention data; Fallback: detect @participant patterns
+        var mentionDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool fromApi = mentions != null && mentions.Count > 0;
+        if (fromApi)
+        {
+            foreach (var m in mentions)
+            {
+                if (!string.IsNullOrEmpty(m.DisplayName)) mentionDisplayNames.Add(m.DisplayName);
+                if (!string.IsNullOrEmpty(m.UserId))
+                {
+                    var uid = m.UserId.TrimStart('@');
+                    var colonIdx = uid.IndexOf(':');
+                    if (colonIdx > 0) mentionDisplayNames.Add(uid[..colonIdx]);
+                }
+            }
+        }
+
+        // Fallback: if no API mentions but text contains @, try matching @participant_name
+        if (!fromApi && text.Contains('@'))
+        {
+            foreach (var p in _participantMap.Values)
+            {
+                if (!string.IsNullOrEmpty(p.FullName)) mentionDisplayNames.Add(p.FullName);
+                if (!string.IsNullOrEmpty(p.Username)) mentionDisplayNames.Add(p.Username);
+                if (!string.IsNullOrEmpty(p.DisplayText)) mentionDisplayNames.Add(p.DisplayText);
+            }
+            mentionDisplayNames.Add("room");
+        }
+
+        if (mentionDisplayNames.Count == 0)
+            return inlines;
+
+        var mentionColor = isOwn ? SentFg : Accent;
+        var processed = new List<Inline>();
+        foreach (var inline in inlines)
+        {
+            // Skip non-Run inlines and code spans (monospace font)
+            if (inline is not Run run ||
+                (run.FontFamily?.Source?.Contains("Cascadia", StringComparison.OrdinalIgnoreCase) == true) ||
+                (run.FontFamily?.Source?.Contains("Consolas", StringComparison.OrdinalIgnoreCase) == true))
+            {
+                processed.Add(inline);
+                continue;
+            }
+
+            var runText = run.Text;
+            int pos = 0;
+            bool hadMention = false;
+
+            // Find mentions in the text
+            foreach (var name in mentionDisplayNames)
+            {
+                if (string.IsNullOrEmpty(name)) continue;
+
+                if (fromApi)
+                {
+                    // API mentions: find the display name in text
+                    var idx = runText.IndexOf(name, pos, StringComparison.OrdinalIgnoreCase);
+                    if (idx < 0) continue;
+
+                    // Include preceding @ if present (text may have "@Name" or just "Name")
+                    var matchStart = idx;
+                    if (matchStart > 0 && runText[matchStart - 1] == '@')
+                        matchStart--;
+
+                    hadMention = true;
+                    if (matchStart > pos)
+                        processed.Add(new Run { Text = runText[pos..matchStart], Foreground = run.Foreground });
+
+                    var matchText = runText[matchStart..(idx + name.Length)];
+                    // Ensure it starts with @ for display
+                    if (!matchText.StartsWith('@')) matchText = "@" + matchText;
+                    var mentionRun = new Run
+                    {
+                        Text = matchText,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                        Foreground = B(mentionColor)
+                    };
+                    if (isOwn) mentionRun.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+                    processed.Add(mentionRun);
+                    pos = idx + name.Length;
+                }
+                else
+                {
+                    // Fallback: look for @name pattern
+                    var searchFor = "@" + name;
+                    var idx = runText.IndexOf(searchFor, pos, StringComparison.OrdinalIgnoreCase);
+                    if (idx < 0) continue;
+
+                    hadMention = true;
+                    if (idx > pos)
+                        processed.Add(new Run { Text = runText[pos..idx], Foreground = run.Foreground });
+                    var fallbackRun = new Run
+                    {
+                        Text = runText[idx..(idx + searchFor.Length)],
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                        Foreground = B(mentionColor)
+                    };
+                    if (isOwn) fallbackRun.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+                    processed.Add(fallbackRun);
+                    pos = idx + searchFor.Length;
+                }
+            }
+
+            if (hadMention)
+            {
+                if (pos < runText.Length)
+                    processed.Add(new Run { Text = runText[pos..], Foreground = run.Foreground });
+            }
+            else
+            {
+                processed.Add(inline);
+            }
+        }
+
+        return processed;
     }
 
     private static void AnimateBubbleIn(FrameworkElement element)

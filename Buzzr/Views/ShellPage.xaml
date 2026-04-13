@@ -32,7 +32,7 @@
                         Background="Transparent" BorderThickness="0"
                         HorizontalAlignment="Center" Margin="0,4,0,14"
                         ToolTipService.ToolTip="All chats">
-                    <FontIcon Glyph="&#xE8BD;" FontSize="16" Foreground="#4CC2FF"/>
+                    <FontIcon Glyph="&#xE8BD;" FontSize="16" Foreground="{StaticResource AccentBrush}"/>
                 </Button>
 
                 <!-- Account icons -->

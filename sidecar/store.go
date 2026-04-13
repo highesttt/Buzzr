@@ -90,6 +90,12 @@ type Message struct {
 	Reactions       []*Reaction
 	EventID         string
 	Redacted        bool
+	Mentions        []MentionInfo
+}
+
+type MentionInfo struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
 }
 
 type Attachment struct {

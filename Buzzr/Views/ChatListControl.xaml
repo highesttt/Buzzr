@@ -80,7 +80,7 @@
                     Width="28" Height="28" Padding="0"
                     Background="Transparent" BorderThickness="0"
                     ToolTipService.ToolTip="New chat (Ctrl+Shift+N)">
-                <FontIcon Glyph="&#xE710;" FontSize="14" Foreground="#4CC2FF"/>
+                <FontIcon Glyph="&#xE710;" FontSize="14" Foreground="{StaticResource AccentBrush}"/>
             </Button>
         </Grid>
 
@@ -116,7 +116,7 @@
             <ProgressRing x:Name="LoadingRing" IsActive="True"
                           Width="32" Height="32"/>
             <TextBlock x:Name="LoadingText" Text="Loading chats..."
-                       FontSize="13" Foreground="#4CC2FF" FontFamily="Segoe UI"
+                       FontSize="13" Foreground="{StaticResource AccentBrush}" FontFamily="Segoe UI"
                        HorizontalAlignment="Center" TextWrapping="Wrap"/>
         </StackPanel>
     </Grid>

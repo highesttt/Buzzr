@@ -575,6 +575,14 @@ public class BeeperMessage
     [JsonPropertyName("reactions")] public List<BeeperReaction>? Reactions { get; set; }
     [JsonPropertyName("isEdited")] public bool IsEdited { get; set; }
     [JsonPropertyName("editedAt")] public string? EditedAt { get; set; }
+    [JsonPropertyName("mentions")] public List<BeeperMention>? Mentions { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class BeeperMention
+{
+    [JsonPropertyName("userId")] public string UserId { get; set; } = "";
+    [JsonPropertyName("displayName")] public string DisplayName { get; set; } = "";
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 

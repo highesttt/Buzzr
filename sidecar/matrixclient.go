@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1184,6 +1185,8 @@ func (mc *MatrixClient) eventToMessage(evt *event.Event, room *Room) *Message {
 		msg.Text = content.Body
 		if content.FormattedBody != "" {
 			msg.Text = content.Body
+			// Extract mentions from Matrix HTML pills: <a href="https://matrix.to/#/@user:server">Name</a>
+			msg.Mentions = extractMentionsFromHTML(content.FormattedBody)
 		}
 		// bridges prefix sender name in body
 		if msg.SenderName != "" && strings.HasPrefix(msg.Text, msg.SenderName+": ") {
@@ -1280,6 +1283,24 @@ func (mc *MatrixClient) contentToAttachment(content *event.MessageEventContent, 
 	}
 
 	return att
+}
+
+// extractMentionsFromHTML parses Matrix HTML pills like:
+// <a href="https://matrix.to/#/@user:server">Display Name</a>
+func extractMentionsFromHTML(html string) []MentionInfo {
+	var mentions []MentionInfo
+	// Match <a href="https://matrix.to/#/@user:server">...</a>
+	re := regexp.MustCompile(`<a\s+href="https://matrix\.to/#/([@!][^"]+)"[^>]*>([^<]+)</a>`)
+	matches := re.FindAllStringSubmatch(html, -1)
+	for _, m := range matches {
+		if len(m) >= 3 {
+			mentions = append(mentions, MentionInfo{
+				UserID:      m[1],
+				DisplayName: m[2],
+			})
+		}
+	}
+	return mentions
 }
 
 func (mc *MatrixClient) processMentions(content *event.MessageEventContent, roomID string) {

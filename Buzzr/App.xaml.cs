@@ -44,6 +44,14 @@ public partial class App : Application
     {
         BeeperApiService.SetBaseUrl(Settings.BaseUrl);
 
+        // Set accent brush to system accent color
+        try
+        {
+            if (Current.Resources["AccentBrush"] is Microsoft.UI.Xaml.Media.SolidColorBrush accentBrush)
+                accentBrush.Color = Buzzr.Theme.T.Accent;
+        }
+        catch { }
+
         _window = new Window { Title = "Buzzr" };
         MainWindow = _window;
 

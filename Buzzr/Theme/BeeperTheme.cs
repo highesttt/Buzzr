@@ -17,17 +17,49 @@ public static class T
     public static readonly Color BorderClr  = C("#1A1E20");
     public static readonly Color Hover      = C("#323232");
     public static readonly Color Selected   = C("#2D2D2D");
-    public static readonly Color Accent     = C("#4CC2FF");
-    public static readonly Color AccentDark = C("#3BA3D9");
+    public static readonly Color Accent      = GetSystemColor(Windows.UI.ViewManagement.UIColorType.Accent);
+    public static readonly Color AccentDark  = GetSystemColor(Windows.UI.ViewManagement.UIColorType.AccentDark1);
+    public static readonly Color AccentDark2 = GetSystemColor(Windows.UI.ViewManagement.UIColorType.AccentDark2);
+    public static readonly Color AccentLight = GetSystemColor(Windows.UI.ViewManagement.UIColorType.AccentLight1);
+    public static readonly Color AccentLight2= GetSystemColor(Windows.UI.ViewManagement.UIColorType.AccentLight2);
     public static readonly Color Fg1        = C("#F3F3F3");
     public static readonly Color Fg2        = C("#A1A1A1");
     public static readonly Color Fg3        = C("#636363");
     public static readonly Color Err        = C("#FF4343");
     public static readonly Color Ok         = C("#6CCB5F");
-    public static readonly Color SentBg     = C("#4CC2FF");
-    public static readonly Color SentFg     = C("#000000");
+    public static readonly Color SentBg     = Accent;
+    public static readonly Color SentFg     = GetContrastForeground(Accent);
     public static readonly Color Black      = C("#000000");
     public static readonly Color White      = C("#FFFFFF");
+
+    private static Color GetSystemColor(Windows.UI.ViewManagement.UIColorType type)
+    {
+        try
+        {
+            var uiSettings = new Windows.UI.ViewManagement.UISettings();
+            var c = uiSettings.GetColorValue(type);
+            return Color.FromArgb(c.A, c.R, c.G, c.B);
+        }
+        catch
+        {
+            return C("#4CC2FF"); // fallback
+        }
+    }
+
+    public static Color DarkenColor(Color c, double factor)
+    {
+        return Color.FromArgb(c.A,
+            (byte)(c.R * factor),
+            (byte)(c.G * factor),
+            (byte)(c.B * factor));
+    }
+
+    private static Color GetContrastForeground(Color bg)
+    {
+        // Use relative luminance to pick black or white text
+        var luminance = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B) / 255.0;
+        return luminance > 0.5 ? C("#000000") : C("#FFFFFF");
+    }
 
     static readonly Dictionary<string, Color> NetColors = new() {
         ["imessage"] = C("#34C759"), ["whatsapp"] = C("#25D366"), ["signal"] = C("#3A76F0"),

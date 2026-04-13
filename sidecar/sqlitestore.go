@@ -88,7 +88,8 @@ func (s *SQLiteStore) createTables() error {
 			linked_message_id TEXT,
 			redacted INTEGER,
 			attachments_json TEXT,
-			reactions_json TEXT
+			reactions_json TEXT,
+			mentions_json TEXT
 		);
 		CREATE TABLE IF NOT EXISTS accounts (
 			account_id TEXT PRIMARY KEY,
@@ -102,7 +103,14 @@ func (s *SQLiteStore) createTables() error {
 		CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_id);
 		CREATE INDEX IF NOT EXISTS idx_members_room ON members(room_id);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrate: add mentions_json column if missing
+	s.db.Exec("ALTER TABLE messages ADD COLUMN mentions_json TEXT")
+
+	return nil
 }
 
 func (s *SQLiteStore) writeLoop() {
@@ -183,7 +191,7 @@ func (s *SQLiteStore) SaveMember(roomID string, member *Member) {
 
 func (s *SQLiteStore) SaveMessage(msg *Message) {
 	s.enqueue(func() {
-		var attachJSON, reactJSON string
+		var attachJSON, reactJSON, mentionsJSON string
 		if len(msg.Attachments) > 0 {
 			if b, err := json.Marshal(msg.Attachments); err == nil {
 				attachJSON = string(b)
@@ -194,15 +202,20 @@ func (s *SQLiteStore) SaveMessage(msg *Message) {
 				reactJSON = string(b)
 			}
 		}
+		if len(msg.Mentions) > 0 {
+			if b, err := json.Marshal(msg.Mentions); err == nil {
+				mentionsJSON = string(b)
+			}
+		}
 		_, err := s.db.Exec(`INSERT OR REPLACE INTO messages
 			(id, room_id, account_id, sender_id, sender_name, timestamp,
 			 sort_key, type, text, is_sender, event_id, linked_message_id,
-			 redacted, attachments_json, reactions_json)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 redacted, attachments_json, reactions_json, mentions_json)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			msg.ID, msg.ChatID, msg.AccountID, msg.SenderID, msg.SenderName,
 			msg.Timestamp.UnixMilli(), msg.SortKey, msg.Type, msg.Text,
 			boolToInt(msg.IsSender), msg.EventID, msg.LinkedMessageID,
-			boolToInt(msg.Redacted), attachJSON, reactJSON,
+			boolToInt(msg.Redacted), attachJSON, reactJSON, mentionsJSON,
 		)
 		if err != nil {
 			log.Warn().Err(err).Str("msg", msg.ID).Msg("Failed to save message to DB")
@@ -411,7 +424,7 @@ func (s *SQLiteStore) GetMessages(roomID string, limit int) []*Message {
 		limit = 50
 	}
 	rows, err := s.db.Query(
-		"SELECT id, room_id, account_id, sender_id, sender_name, timestamp, sort_key, type, text, is_sender, event_id, linked_message_id, redacted, attachments_json, reactions_json FROM messages WHERE room_id = ? ORDER BY timestamp DESC LIMIT ?",
+		"SELECT id, room_id, account_id, sender_id, sender_name, timestamp, sort_key, type, text, is_sender, event_id, linked_message_id, redacted, attachments_json, reactions_json, COALESCE(mentions_json,'') FROM messages WHERE room_id = ? ORDER BY timestamp DESC LIMIT ?",
 		roomID, limit)
 	if err != nil {
 		return nil
@@ -423,11 +436,11 @@ func (s *SQLiteStore) GetMessages(roomID string, limit int) []*Message {
 		var m Message
 		var ts int64
 		var isSender, redacted int
-		var attachJSON, reactJSON sql.NullString
+		var attachJSON, reactJSON, mentionsJSON sql.NullString
 		var senderName, sortKey, linkedMsgID, eventID sql.NullString
 		err := rows.Scan(&m.ID, &m.ChatID, &m.AccountID, &m.SenderID, &senderName,
 			&ts, &sortKey, &m.Type, &m.Text, &isSender, &eventID, &linkedMsgID,
-			&redacted, &attachJSON, &reactJSON)
+			&redacted, &attachJSON, &reactJSON, &mentionsJSON)
 		if err != nil {
 			continue
 		}
@@ -444,6 +457,9 @@ func (s *SQLiteStore) GetMessages(roomID string, limit int) []*Message {
 		}
 		if reactJSON.String != "" {
 			json.Unmarshal([]byte(reactJSON.String), &m.Reactions)
+		}
+		if mentionsJSON.String != "" {
+			json.Unmarshal([]byte(mentionsJSON.String), &m.Mentions)
 		}
 		msgs = append(msgs, &m)
 	}
@@ -459,7 +475,7 @@ func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, li
 		limit = 25
 	}
 	rows, err := s.db.Query(
-		"SELECT id, room_id, account_id, sender_id, sender_name, timestamp, sort_key, type, text, is_sender, event_id, linked_message_id, redacted, attachments_json, reactions_json FROM messages WHERE room_id = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?",
+		"SELECT id, room_id, account_id, sender_id, sender_name, timestamp, sort_key, type, text, is_sender, event_id, linked_message_id, redacted, attachments_json, reactions_json, COALESCE(mentions_json,'') FROM messages WHERE room_id = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?",
 		roomID, beforeTimestamp, limit)
 	if err != nil {
 		return nil
@@ -471,8 +487,8 @@ func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, li
 		var m Message
 		var ts int64
 		var isSender, redacted int
-		var senderName, sortKey, linkedMsgID, eventID, attachJSON, reactJSON sql.NullString
-		err := rows.Scan(&m.ID, &m.ChatID, &m.AccountID, &m.SenderID, &senderName, &ts, &sortKey, &m.Type, &m.Text, &isSender, &eventID, &linkedMsgID, &redacted, &attachJSON, &reactJSON)
+		var senderName, sortKey, linkedMsgID, eventID, attachJSON, reactJSON, mentionsJSON sql.NullString
+		err := rows.Scan(&m.ID, &m.ChatID, &m.AccountID, &m.SenderID, &senderName, &ts, &sortKey, &m.Type, &m.Text, &isSender, &eventID, &linkedMsgID, &redacted, &attachJSON, &reactJSON, &mentionsJSON)
 		if err != nil {
 			continue
 		}
@@ -488,6 +504,9 @@ func (s *SQLiteStore) GetMessagesBefore(roomID string, beforeTimestamp int64, li
 		}
 		if reactJSON.String != "" {
 			json.Unmarshal([]byte(reactJSON.String), &m.Reactions)
+		}
+		if mentionsJSON.String != "" {
+			json.Unmarshal([]byte(mentionsJSON.String), &m.Mentions)
 		}
 		msgs = append(msgs, &m)
 	}

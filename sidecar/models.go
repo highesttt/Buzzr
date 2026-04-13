@@ -110,6 +110,12 @@ type APIMessage struct {
 	LinkedMessageID string          `json:"linkedMessageID,omitempty"`
 	Attachments     []APIAttachment `json:"attachments,omitempty"`
 	Reactions       []APIReaction   `json:"reactions,omitempty"`
+	Mentions        []APIMention    `json:"mentions,omitempty"`
+}
+
+type APIMention struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
 }
 
 type APIAttachment struct {
@@ -380,6 +386,16 @@ func MessageToAPIMessage(msg *Message, sidecarBaseURL string) APIMessage {
 				ParticipantID: r.ParticipantID,
 				Emoji:         r.IsEmoji,
 				ImgURL:        r.ImgURL,
+			}
+		}
+	}
+
+	if len(msg.Mentions) > 0 {
+		apiMsg.Mentions = make([]APIMention, len(msg.Mentions))
+		for i, m := range msg.Mentions {
+			apiMsg.Mentions[i] = APIMention{
+				UserID:      m.UserID,
+				DisplayName: m.DisplayName,
 			}
 		}
 	}
