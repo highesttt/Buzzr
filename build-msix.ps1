@@ -79,6 +79,20 @@ try {
     $env:CGO_ENABLED = $savedCGO
 }
 
+Step "Building native taskbar badge DLL"
+$nativeDir = Join-Path $Root "Buzzr\Native"
+$nativeDll = Join-Path $nativeDir "taskbar_badge.dll"
+$gccPath = "E:\Programs\msys64\ucrt64\bin\gcc.exe"
+Push-Location $nativeDir
+& $gccPath -shared -O2 -o taskbar_badge.dll taskbar_badge.c -lole32 -luuid -lgdi32 -luser32 -lm
+Pop-Location
+if ($LASTEXITCODE -ne 0) {
+    Warn "Native DLL build failed (badge notifications will be disabled)"
+} elseif (Test-Path $nativeDll) {
+    $dllSize = (Get-Item $nativeDll).Length / 1KB
+    Ok "Built taskbar_badge.dll ($([math]::Round($dllSize, 1)) KB)"
+}
+
 Step "Visual assets"
 $assetsDir = Join-Path $Root "Buzzr\Assets"
 if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null }

@@ -13,7 +13,7 @@ namespace Buzzr;
 
 public partial class App : Application
 {
-    public const string Version = "0.0.3";
+    public const string Version = "0.1.0";
 
     private Window? _window;
     private Frame? _rootFrame;

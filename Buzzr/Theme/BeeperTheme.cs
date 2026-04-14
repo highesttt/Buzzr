@@ -29,7 +29,7 @@ public static class T
     public static readonly Color Ok         = C("#6CCB5F");
     public static readonly Color AccentSoft = Color.FromArgb(100, Accent.R, Accent.G, Accent.B);
     public static readonly Color SentBg     = Accent;
-    public static readonly Color SentFg     = GetContrastForeground(Accent);
+    public static readonly Color SentFg     = GetContrastFg(Accent);
     public static readonly Color Black      = C("#000000");
     public static readonly Color White      = C("#FFFFFF");
 
@@ -55,7 +55,7 @@ public static class T
             (byte)(c.B * factor));
     }
 
-    private static Color GetContrastForeground(Color bg)
+    public static Color GetContrastFg(Color bg)
     {
         var luminance = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B) / 255.0;
         return luminance > 0.5 ? C("#000000") : C("#FFFFFF");

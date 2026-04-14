@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -1454,16 +1455,22 @@ public sealed partial class ChatListControl : UserControl
                 ? $"{chatName} — {sender}"
                 : sender;
 
-            var builder = new AppNotificationBuilder()
-                .AddText(title)
-                .AddText(preview);
-            AppNotificationManager.Default.Show(builder.BuildNotification());
+            try
+            {
+                var builder = new AppNotificationBuilder()
+                    .AddText(title)
+                    .AddText(preview);
+                AppNotificationManager.Default.Show(builder.BuildNotification());
+            }
+            catch (Exception ex) { AppLog.Write($"[NOTIF] Toast failed: {ex.Message}"); }
 
-            // Update window title with unread count and flash taskbar
-            UpdateUnreadBadge();
-            FlashTaskbar();
+            try { UpdateUnreadBadge(); }
+            catch (Exception ex) { AppLog.Write($"[NOTIF] Badge failed: {ex.Message}"); }
+
+            try { FlashTaskbar(); }
+            catch (Exception ex) { AppLog.Write($"[NOTIF] Flash failed: {ex.Message}"); }
         }
-        catch { }
+        catch (Exception ex) { AppLog.Write($"[NOTIF] TryShowToast failed: {ex.Message}"); }
     }
 
     public void UpdateUnreadBadge()
@@ -1473,8 +1480,10 @@ public sealed partial class ChatListControl : UserControl
             var totalUnread = _allChats.Sum(c => c.UnreadCount);
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (App.MainWindow != null)
-                    App.MainWindow.Title = totalUnread > 0 ? $"Buzzr ({totalUnread})" : "Buzzr";
+                if (App.MainWindow == null) return;
+                App.MainWindow.Title = totalUnread > 0 ? $"Buzzr ({totalUnread})" : "Buzzr";
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+                TaskbarBadge.SetBadge(hwnd, totalUnread);
             });
         }
         catch { }
@@ -1488,9 +1497,9 @@ public sealed partial class ChatListControl : UserControl
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
             var info = new FLASHWINFO
             {
-                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<FLASHWINFO>(),
+                cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
                 hwnd = hwnd,
-                dwFlags = 0x03, // FLASHW_ALL (flash caption + taskbar)
+                dwFlags = 0x03, // FLASHW_ALL
                 uCount = 3,
                 dwTimeout = 0
             };
@@ -1499,10 +1508,12 @@ public sealed partial class ChatListControl : UserControl
         catch { }
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+
+
+    [DllImport("user32.dll")]
     private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential)]
     private struct FLASHWINFO
     {
         public uint cbSize;

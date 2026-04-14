@@ -25,6 +25,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>buzzr-sidecar.exe</Link>
     </Content>
+    <Content Include="Native\taskbar_badge.dll" Condition="Exists('Native\taskbar_badge.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>taskbar_badge.dll</Link>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

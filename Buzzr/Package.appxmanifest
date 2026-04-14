@@ -9,7 +9,7 @@
   <Identity
     Name="dev.highest.buzzr"
     Publisher="CN=dev.highest.buzzr"
-    Version="0.0.3.0"
+    Version="0.1.0.0"
     ProcessorArchitecture="x64" />
 
   <mp:PhoneIdentity PhoneProductId="d3b2a4f0-8c1e-4e5a-9f6b-7d2e3a1c0b5f" PhonePublisherId="00000000-0000-0000-0000-000000000000" />

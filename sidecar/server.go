@@ -18,7 +18,7 @@ import (
 	"maunium.net/go/mautrix/event"
 )
 
-var Version = "0.0.3"
+var Version = "0.1.0"
 
 type Server struct {
 	port   int
@@ -107,7 +107,6 @@ func (s *Server) Stop() {
 	}
 }
 
-
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -154,7 +153,6 @@ func extractBearerToken(r *http.Request) string {
 	return ""
 }
 
-
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -169,7 +167,6 @@ func readJSON(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
 }
-
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	osName := runtime.GOOS
@@ -201,7 +198,6 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, info)
 }
-
 
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var req APILoginRequest
@@ -290,7 +286,6 @@ func (s *Server) handleConfirmVerification(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-
 func (s *Server) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts := s.store.GetAccounts()
 	result := make([]APIAccount, len(accounts))
@@ -318,7 +313,6 @@ func (s *Server) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-
 
 func (s *Server) handleGetChats(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -531,7 +525,6 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (s *Server) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 	chatID := r.PathValue("chatID")
 	cursor := r.URL.Query().Get("cursor")
@@ -693,7 +686,6 @@ func (s *Server) handleRemoveReaction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (s *Server) handleUnifiedSearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -730,7 +722,6 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		"newestCursor": nil,
 	})
 }
-
 
 func (s *Server) handleUploadAsset(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(500 << 20); err != nil {
@@ -875,7 +866,6 @@ func (s *Server) handleServeAsset(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-
 func (s *Server) handleSearchContacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items": []interface{}{},
@@ -891,7 +881,6 @@ func (s *Server) handleListContacts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	token := extractBearerToken(r)
 	if token == "" {
@@ -906,11 +895,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.wsHub.HandleWebSocket(w, r)
 }
 
-
 func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
-
 
 func determineMsgType(mimeType string) string {
 	if strings.HasPrefix(mimeType, "image/") {

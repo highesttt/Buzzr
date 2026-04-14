@@ -1,11 +1,12 @@
 #!/bin/bash
-# Usage: ./build.sh [--version 0.0.3.0] [--platform x64] [--config Release] [--skip-sign] [--debug-only]
+# Usage: ./build.sh [--version 0.1.0.0] [--platform x64] [--config Release] [--skip-sign] [--debug-only] [--msi]
 
-VERSION="0.0.3.0"
+VERSION="0.1.0.0"
 PLATFORM="x64"
 CONFIG="Release"
 SKIP_SIGN=false
 DEBUG_ONLY=false
+BUILD_MSI=false
 ROOT="$(cd "$(dirname "$0")" && pwd -W)"
 PROJ="$ROOT\\Buzzr\\Buzzr.csproj"
 OUT="$ROOT\\release"
@@ -21,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         --config) CONFIG="$2"; shift 2;;
         --skip-sign) SKIP_SIGN=true; shift;;
         --debug-only) DEBUG_ONLY=true; shift;;
+        --msi) BUILD_MSI=true; shift;;
         *) echo "Unknown: $1"; exit 1;;
     esac
 done
@@ -37,6 +39,12 @@ cd "$UROOT/sidecar" || fail "sidecar dir not found"
 CC="$CC" CGO_ENABLED=1 go build -tags goolm -ldflags "-s -w" -o buzzr-sidecar.exe . || fail "Sidecar build failed"
 SIZE=$(du -h buzzr-sidecar.exe | cut -f1)
 ok "Built buzzr-sidecar.exe ($SIZE)"
+
+step "Building native taskbar badge DLL"
+cd "$UROOT/Buzzr/Native" || fail "Native dir not found"
+"$CC" -shared -O2 -o taskbar_badge.dll taskbar_badge.c -lole32 -luuid -lgdi32 -luser32 -lm || fail "Native DLL build failed"
+SIZE=$(du -h taskbar_badge.dll | cut -f1)
+ok "Built taskbar_badge.dll ($SIZE)"
 
 if $DEBUG_ONLY; then
     step "Building debug app"
@@ -98,7 +106,6 @@ if [ -n "$MSIX" ]; then
         CERTPW="Buzzr-Dev"
         CERTSUBJECT="CN=dev.highest.buzzr"
 
-        # create cert if it doesn't exist
         if [ ! -f "$UROOT/.certs/Buzzr.pfx" ]; then
             mkdir -p "$UROOT/.certs"
             powershell -c "
@@ -114,7 +121,6 @@ if [ -n "$MSIX" ]; then
             ok "Created signing cert"
         fi
 
-        # find signtool from NuGet cache
         SIGNTOOL=$(find "$USERPROFILE/.nuget/packages/microsoft.windows.sdk.buildtools" -path "*/x64/signtool.exe" 2>/dev/null | sort -r | head -1)
         if [ -z "$SIGNTOOL" ]; then
             SIGNTOOL=$(find "/c/Program Files" "/c/Program Files (x86)" -name "signtool.exe" -path "*/x64/*" 2>/dev/null | sort -r | head -1)
@@ -138,7 +144,6 @@ else
     warn "MSIX not found in output"
 fi
 
-# bundle MSIX installer (msix + cert + install script)
 if [ -n "$MSIX" ] && [ -f "$UROOT/.certs/Buzzr.pfx" ]; then
     step "Creating MSIX installer bundle"
     BUNDLE="$UROOT/release/Buzzr-$VERSION-$PLATFORM-installer"
@@ -153,6 +158,17 @@ if [ -n "$MSIX" ] && [ -f "$UROOT/.certs/Buzzr.pfx" ]; then
     export MSYS_NO_PATHCONV=1
     rm -rf "$BUNDLE"
     ok "Installer: $BUNDLEZIP"
+fi
+
+if $BUILD_MSI; then
+    step "Building MSI installer"
+    powershell -ExecutionPolicy Bypass -File "$UROOT/build-msi.ps1" \
+        -Version "$VERSION" -Platform "$PLATFORM" -SourceDir "$UROOT/release/portable" -SkipBuild
+    if [ $? -eq 0 ]; then
+        ok "MSI: $UROOT/release/Buzzr-$VERSION-$PLATFORM.msi"
+    else
+        warn "MSI build failed — make sure WiX is installed: dotnet tool install --global wix"
+    fi
 fi
 
 step "Done"
