@@ -1,7 +1,7 @@
-# .\build-msix.ps1 [-Version "1.0.0.0"] [-Platform "x64"] [-Configuration "Release"] [-SkipSign]
+# .\build-msix.ps1 [-Version "0.1.0.0"] [-Platform "x64"] [-Configuration "Release"] [-SkipSign]
 
 param(
-    [string]$Version = "1.0.0.0",
+    [string]$Version = "0.1.0.0",
     [string]$Platform = "x64",
     [string]$Configuration = "Release",
     [switch]$SkipSign
