@@ -176,9 +176,9 @@ public sealed partial class MessageView : UserControl
         ImageOverlayClose.Click += (s, e) => CloseImageOverlay();
         ImageOverlay.Tapped += (s, e) =>
         {
-            if (e.OriginalSource is Image) return; // clicked on the image — don't close
-            if (e.OriginalSource is Button) return; // clicked on a button — don't close
-            if (e.OriginalSource is FontIcon) return; // clicked on button icon — don't close
+            if (e.OriginalSource is Image) return;
+            if (e.OriginalSource is Button) return;
+            if (e.OriginalSource is FontIcon) return;
             CloseImageOverlay();
         };
         this.KeyDown += (s, e) =>
@@ -267,7 +267,6 @@ public sealed partial class MessageView : UserControl
             fullRes = source;
         }
 
-        // Size the container to fit the viewport, so zoom 1x = fit-to-screen
         fullRes.ImageOpened += (s, e) =>
         {
             var bmpSrc = s as BitmapImage;
@@ -281,7 +280,7 @@ public sealed partial class MessageView : UserControl
             if (viewW <= 0 || viewH <= 0) return;
 
             var scale = Math.Min(viewW / imgW, viewH / imgH);
-            if (scale > 1) scale = 1; // don't upscale small images
+            if (scale > 1) scale = 1;
 
             ImageOverlayContainer.Width = imgW * scale;
             ImageOverlayContainer.Height = imgH * scale;
@@ -479,7 +478,11 @@ public sealed partial class MessageView : UserControl
 
             var distFromBottom = MsgScroll.ScrollableHeight - MsgScroll.VerticalOffset;
             if (distFromBottom < 150 || msg.IsSender)
+            {
                 ScrollToBottom();
+                if (!msg.IsSender)
+                    _ = App.Api.MarkChatReadAsync(chatId, msg.Id);
+            }
         }
         catch { }
     }
@@ -643,7 +646,10 @@ public sealed partial class MessageView : UserControl
         var sorted = response.Messages.OrderBy(m => m.SortKey).ToList();
         _msgCursor = response.OldestCursor ?? response.Cursor ?? sorted.FirstOrDefault()?.SortKey;
         _msgHasMore = response.HasMore;
-        _allMessages = response.Messages;
+        var dedupMap = new Dictionary<string, BeeperMessage>();
+        foreach (var m in response.Messages)
+            dedupMap[m.Id] = m;
+        _allMessages = dedupMap.Values.ToList();
 
         _messageMap.Clear();
         foreach (var m in _allMessages)
@@ -656,7 +662,8 @@ public sealed partial class MessageView : UserControl
         ScrollToBottom();
         UpdateScheduledBar();
 
-        _ = App.Api.MarkChatReadAsync(chat.Id);
+        var latestId = _allMessages.LastOrDefault()?.Id;
+        _ = App.Api.MarkChatReadAsync(chat.Id, latestId);
     }
 
     private async Task LoadEarlierMessagesAsync()
@@ -737,7 +744,10 @@ public sealed partial class MessageView : UserControl
     {
         MsgStack.Children.Clear();
 
-        var msgs = messages.OrderBy(m => m.Timestamp).ToList();
+        var deduped = new Dictionary<string, BeeperMessage>();
+        foreach (var m in messages)
+            deduped[m.Id] = m;
+        var msgs = deduped.Values.OrderBy(m => m.Timestamp).ToList();
         string? lastDate = null;
         string? lastSender = null;
         string? lastTimestamp = null;
@@ -1673,7 +1683,7 @@ public sealed partial class MessageView : UserControl
         var capturedSrcUrl = srcUrl;
         double audioDuration = duration > 0 ? duration : 0;
         var playbackStopwatch = new System.Diagnostics.Stopwatch();
-        double playbackOffset = 0; // track seek offset
+        double playbackOffset = 0;
         double playbackSpeed = 1.0;
 
         playBtn.Click += (s, e) =>
@@ -1742,7 +1752,7 @@ public sealed partial class MessageView : UserControl
                                     timeLabel.Text = $"0:00 / {tm}:{tsec:D2}";
                                 }
                             }
-                            catch { /* PlaybackSession not accessible for OGG — use estimate */ }
+                            catch { }
                         });
                     };
 

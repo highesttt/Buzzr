@@ -106,7 +106,7 @@ __declspec(dllexport) HICON __stdcall CreateBadgeIcon(
     int badgeW = ts.cx + padX * 2;
     if (badgeW < badgeH) badgeW = badgeH;
 
-    /* Clamp to canvas — don't expand, Windows shrinks wider icons */
+    /* Clamp to canvas, don't expand, Windows shrinks wider icons */
     if (badgeW > canvasW) badgeW = canvasW;
 
     BITMAPINFO bmi = {0};
@@ -130,7 +130,7 @@ __declspec(dllexport) HICON __stdcall CreateBadgeIcon(
     int badgeX = (canvasW - badgeW) / 2;
     int badgeY = (canvasH - badgeH) / 2;
 
-    /* Clamp corner radius to half the smaller dimension — fully rounded */
+    /* Clamp corner radius to half the smaller dimension (fully rounded) */
     int cr = badgeH < badgeW ? badgeH / 2 : badgeW / 2;
     FillRoundedRect(pixels, canvasW, canvasH, badgeX, badgeY, badgeW, badgeH,
                     cr, bgR, bgG, bgB);

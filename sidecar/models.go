@@ -111,6 +111,7 @@ type APIMessage struct {
 	Attachments     []APIAttachment `json:"attachments,omitempty"`
 	Reactions       []APIReaction   `json:"reactions,omitempty"`
 	Mentions        []APIMention    `json:"mentions,omitempty"`
+	IsEdited        bool            `json:"isEdited,omitempty"`
 }
 
 type APIMention struct {
@@ -350,6 +351,7 @@ func MessageToAPIMessage(msg *Message, sidecarBaseURL string) APIMessage {
 		Text:            msg.Text,
 		IsSender:        msg.IsSender,
 		IsUnread:        msg.IsUnread,
+		IsEdited:        msg.IsEdited,
 		LinkedMessageID: msg.LinkedMessageID,
 	}
 

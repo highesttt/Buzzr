@@ -90,6 +90,7 @@ type Message struct {
 	Reactions       []*Reaction
 	EventID         string
 	Redacted        bool
+	IsEdited        bool
 	Mentions        []MentionInfo
 }
 

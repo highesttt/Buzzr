@@ -14,7 +14,7 @@ public static class AppLog
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Buzzr");
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "debug.log");
-        try { File.WriteAllText(_path, $"=== Buzzr Debug Log — {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n"); } catch { }
+        try { File.WriteAllText(_path, $"=== Buzzr Debug Log {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n"); } catch { }
     }
     public static void Write(string msg)
     {
@@ -182,9 +182,10 @@ public class BeeperApiService : IDisposable
         await PostAsync<object>($"/v1/chats/{Uri.EscapeDataString(chatId)}/unmute", new { });
     }
 
-    public async Task MarkChatReadAsync(string chatId)
+    public async Task MarkChatReadAsync(string chatId, string? eventId = null)
     {
-        await PostAsync<object>($"/v1/chats/{Uri.EscapeDataString(chatId)}/markread", new { });
+        var body = string.IsNullOrEmpty(eventId) ? new { } : (object)new { eventId };
+        await PostAsync<object>($"/v1/chats/{Uri.EscapeDataString(chatId)}/markread", body);
     }
 
     public async Task<List<BeeperChat>> GetAllChatsAsync(string? accountId = null)

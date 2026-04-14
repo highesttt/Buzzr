@@ -10,7 +10,7 @@
            Compressed="yes"
            Scope="perMachine">
 
-    <SummaryInformation Description="Buzzr — Native Beeper Client for Windows" />
+    <SummaryInformation Description="Buzzr - Native Beeper Client for Windows" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of Buzzr is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 

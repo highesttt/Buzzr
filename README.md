@@ -1,4 +1,4 @@
-# Buzzr — Native Beeper Client for Windows 🐝
+# Buzzr: Native Beeper Client for Windows ⚡
 
 </br>
 
@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-PolyForm_NC_1.0-red?style=flat)](LICENSE)
 
 Buzzr is a native Windows 11 desktop client for [Beeper](https://beeper.com), the unified messaging platform.\
-It aggregates all your chats — Discord, WhatsApp, Telegram, Signal, Instagram, Messenger, and more — into a single, beautiful WinUI 3 interface.\
+It aggregates all your chats (Discord, WhatsApp, Telegram, Signal, Instagram, Messenger, and more) into a single, beautiful WinUI 3 interface.\
 Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so you get real-time messaging with a native Windows experience.
 
 > [!WARNING]
@@ -19,26 +19,26 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
 
 ## Features ✨
 
-- [x] **Unified inbox** — All your networks in one sidebar (Discord, WhatsApp, Telegram, Signal, Instagram, Messenger, Line, LinkedIn, Twitter, Google Messages)
-- [x] **Real-time messaging** — WebSocket-powered live updates
-- [x] **Rich media** — Images, videos, GIFs (via Klipy), voice messages with inline playback
-- [x] **Reactions** — Send and receive emoji reactions
-- [x] **Replies & quotes** — Reply to messages with quote previews
-- [x] **Edit & delete messages** — Modify or remove sent messages
-- [x] **@Mentions** — Autocomplete mentions in group chats
-- [x] **Markdown support** — Quote blocks, text formatting
-- [x] **Chat management** — Pin, mute, archive, mark as read
-- [x] **Drag-and-drop pins** — Reorder pinned chats and network sidebar
-- [x] **Message search** — Search within conversations
-- [x] **Scheduled messages** — Send messages at a specific time
-- [x] **GIF picker** — Search and send GIFs with Klipy integration
-- [x] **Notifications** — Native Windows App Notifications
-- [x] **Dark theme** — Material Design 3 dark mode with system accent colors and Mica backdrop
-- [x] **Censor mode** — Randomize text for privacy during screen recordings
-- [x] **Built-in terminal** — Debug terminal with custom commands
-- [x] **Local database** — SQLite caching for offline message access
-- [x] **Avatar caching** — Cached profile pictures for better performance
-- [x] **Auto-login** — Saved authentication tokens between sessions
+- [x] **Unified inbox** - All your networks in one sidebar (Discord, WhatsApp, Telegram, Signal, Instagram, Messenger, Line, LinkedIn, Twitter, Google Messages)
+- [x] **Real-time messaging** - WebSocket-powered live updates
+- [x] **Rich media** - Images, videos, GIFs (via Klipy), voice messages with inline playback
+- [x] **Reactions** - Send and receive emoji reactions
+- [x] **Replies & quotes** - Reply to messages with quote previews
+- [x] **Edit & delete messages** - Modify or remove sent messages
+- [x] **@Mentions** - Autocomplete mentions in group chats
+- [x] **Markdown support** - Quote blocks, text formatting
+- [x] **Chat management** - Pin, mute, archive, mark as read
+- [x] **Drag-and-drop pins** - Reorder pinned chats and network sidebar
+- [x] **Message search** - Search within conversations
+- [x] **Scheduled messages** - Send messages at a specific time
+- [x] **GIF picker** - Search and send GIFs with Klipy integration
+- [x] **Notifications** - Native Windows App Notifications
+- [x] **Dark theme** - Material Design 3 dark mode with system accent colors and Mica backdrop
+- [x] **Censor mode** - Randomize text for privacy during screen recordings
+- [x] **Built-in terminal** - Debug terminal with custom commands
+- [x] **Local database** - SQLite caching for offline message access
+- [x] **Avatar caching** - Cached profile pictures for better performance
+- [x] **Auto-login** - Saved authentication tokens between sessions
 
 ## Supported Networks 🌐
 
@@ -50,7 +50,7 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
 
 ...and any other network supported by Beeper's bridge infrastructure.
 
-*LINE is currently only supported via the unofficial [mautrix-line-bridge](https://github.com/highesttt/matrix-line-messenger)
+*LINE is currently only supported via the unofficial [matrix-line-bridge](https://github.com/highesttt/matrix-line-messenger)
 
 ## Screenshots 🖼️
 
@@ -73,7 +73,7 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
 
 - .NET 8 SDK
 - Go 1.25+
-- GCC / MinGW (for CGO — required by the sidecar's SQLite dependency)
+- GCC / MinGW (for CGO, required by the sidecar's SQLite dependency)
 
 ## Installation 🚀
 
@@ -86,7 +86,7 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
 ### MSI Installer
 
 1. Download the latest `Buzzr-x.x.x-x64.msi` from [Releases](../../releases)
-2. Run the installer — it will guide you through setup
+2. Run the installer. It will guide you through setup
 3. Buzzr is installed to `Program Files\Buzzr` with Start Menu and Desktop shortcuts
 
 ### MSIX Installer
@@ -137,17 +137,6 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
    # or build MSI standalone
    .\build-msi.ps1 -Platform "x64"
    ```
-
-## Tech Stack 🛠️
-
-| Layer | Technology |
-|---|---|
-| Frontend | WinUI 3 (Windows App SDK 1.6), XAML, C# 12 |
-| Backend | Go 1.25, mautrix (Matrix SDK) |
-| Database | SQLite (local cache) |
-| Protocol | Matrix (via Beeper bridges) |
-| Build | dotnet CLI, MSBuild, MSIX |
-| Dependencies | CommunityToolkit.Mvvm, gorilla/websocket, zerolog |
 
 ## Suggestions and Contributions 💡
 

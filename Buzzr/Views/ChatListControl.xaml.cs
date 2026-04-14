@@ -29,7 +29,7 @@ public sealed partial class ChatListControl : UserControl
     public event Action<string, string>? MessageReceived;
     public event Action? ChatsLoaded;
 
-    private string? _selectedChatId;
+    private static string? _selectedChatId;
     private List<BeeperChat> _allChats = [];
     private Dictionary<string, BeeperAccount> _accountMap = [];
     private CancellationTokenSource? _searchCts;
@@ -211,7 +211,7 @@ public sealed partial class ChatListControl : UserControl
 
             if (ids.Count > 0 && _allChats.Count > 0 && ids.Count >= _allChats.Count * 0.8)
             {
-                AppLog.Write($"[LowPri] API returned {ids.Count}/{_allChats.Count} chats — inbox param likely unsupported, ignoring");
+                AppLog.Write($"[LowPri] API returned {ids.Count}/{_allChats.Count} chats, inbox param likely unsupported, ignoring");
                 _lowPriLoaded = true;
                 return;
             }
@@ -345,6 +345,11 @@ public sealed partial class ChatListControl : UserControl
         {
             var allChats = await App.Api.GetAllChatsAsync();
             _allChats = allChats;
+            if (!string.IsNullOrEmpty(_selectedChatId))
+            {
+                var sel = _allChats.Find(c => c.Id == _selectedChatId);
+                if (sel != null) sel.UnreadCount = 0;
+            }
             _sidecarReady = true;
             await FetchLowPriorityIdsAsync();
         }
@@ -390,6 +395,8 @@ public sealed partial class ChatListControl : UserControl
                 {
                     if (_allChats[i].IsPinned && !fresh.IsPinned)
                         fresh.IsPinned = true;
+                    if (fresh.Id == _selectedChatId)
+                        fresh.UnreadCount = 0;
                     _allChats[i] = fresh;
                 }
             }
@@ -528,7 +535,7 @@ public sealed partial class ChatListControl : UserControl
         netDot.Width = 12; netDot.Height = 12;
         avatarContainer.Children.Add(netDot);
 
-        if (chat.UnreadCount > 0)
+        if (chat.UnreadCount > 0 && !_locallyReadChatIds.Contains(chat.Id))
         {
             var badge = Badge(chat.UnreadCount);
             badge.HorizontalAlignment = HorizontalAlignment.Right;
@@ -656,12 +663,12 @@ public sealed partial class ChatListControl : UserControl
     private void SelectChat(BeeperChat chat)
     {
         _selectedChatId = chat.Id;
+        _locallyReadChatIds.Add(chat.Id);
         bool hadUnread = chat.UnreadCount > 0;
-        if (hadUnread)
-        {
-            chat.UnreadCount = 0;
-            UpdateUnreadBadge();
-        }
+        chat.UnreadCount = 0;
+        var inList = _allChats.Find(c => c.Id == chat.Id);
+        if (inList != null) inList.UnreadCount = 0;
+        UpdateUnreadBadge();
 
         foreach (var child in ListStack.Children)
         {
@@ -678,9 +685,7 @@ public sealed partial class ChatListControl : UserControl
         }
 
         if (hadUnread)
-        {
             ApplyFilters();
-        }
 
         foreach (var child in ListStack.Children)
         {
@@ -734,22 +739,13 @@ public sealed partial class ChatListControl : UserControl
 
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
 
-        var titleRow = new Grid();
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var titleStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         if (chat.IsPinned)
             titleStack.Children.Add(new FontIcon { Glyph = "\uE718", FontSize = 10, Foreground = B(Fg3), VerticalAlignment = VerticalAlignment.Center });
         if (chat.IsMuted)
             titleStack.Children.Add(new FontIcon { Glyph = "\uE74F", FontSize = 10, Foreground = B(Fg3), VerticalAlignment = VerticalAlignment.Center });
         titleStack.Children.Add(Lbl(displayTitle, 13, Fg1, true, maxLines: 1));
-        titleRow.Children.Add(titleStack);
-
-        var time = Lbl(RelativeTime(chat.LastActivity), 11, Fg3);
-        Grid.SetColumn(time, 1);
-        titleRow.Children.Add(time);
-        info.Children.Add(titleRow);
+        info.Children.Add(titleStack);
 
         var networkName = GetNetworkName(chat);
         info.Children.Add(Lbl(!string.IsNullOrEmpty(networkName) ? networkName : "Chat", 11, Fg3, margin: new Thickness(0, 1, 0, 0), maxLines: 1));
@@ -761,8 +757,9 @@ public sealed partial class ChatListControl : UserControl
         Grid.SetColumn(info, 1);
         row.Children.Add(info);
 
-        var rightStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 4 };
-        if (chat.UnreadCount > 0)
+        var rightStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        rightStack.Children.Add(Lbl(RelativeTime(chat.LastActivity), 11, Fg3));
+        if (chat.UnreadCount > 0 && !_locallyReadChatIds.Contains(chat.Id))
             rightStack.Children.Add(Badge(chat.UnreadCount));
         Grid.SetColumn(rightStack, 2);
         row.Children.Add(rightStack);
@@ -1346,6 +1343,10 @@ public sealed partial class ChatListControl : UserControl
                     {
                         DispatcherQueue.TryEnqueue(() =>
                         {
+                            if (chat.Id == _selectedChatId)
+                                chat.UnreadCount = 0;
+                            else if (chat.UnreadCount > 0)
+                                _locallyReadChatIds.Remove(chat.Id);
                             UpsertChatInList(chat);
                             ApplyFilters();
                         });
@@ -1440,6 +1441,9 @@ public sealed partial class ChatListControl : UserControl
             var isSender = msgEl.TryGetProperty("isSender", out var isSProp) && isSProp.GetBoolean();
             if (isSender) return;
 
+            var isEdited = msgEl.TryGetProperty("isEdited", out var isEProp) && isEProp.GetBoolean();
+            if (isEdited) return;
+
             var isChatOpen = chatId == _selectedChatId && App.IsWindowFocused;
             if (isChatOpen) return;
 
@@ -1452,7 +1456,7 @@ public sealed partial class ChatListControl : UserControl
 
             // Show chat name + sender for groups, just sender for DMs
             var title = !string.IsNullOrEmpty(chatName) && chatName != sender
-                ? $"{chatName} — {sender}"
+                ? $"{chatName} - {sender}"
                 : sender;
 
             try
@@ -1473,17 +1477,23 @@ public sealed partial class ChatListControl : UserControl
         catch (Exception ex) { AppLog.Write($"[NOTIF] TryShowToast failed: {ex.Message}"); }
     }
 
+    private static readonly HashSet<string> _locallyReadChatIds = new();
+
     public void UpdateUnreadBadge()
     {
         try
         {
-            var totalUnread = _allChats.Sum(c => c.UnreadCount);
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (App.MainWindow == null) return;
-                App.MainWindow.Title = totalUnread > 0 ? $"Buzzr ({totalUnread})" : "Buzzr";
+                var total = _allChats
+                    .Where(c => c.Id != _selectedChatId && !_locallyReadChatIds.Contains(c.Id))
+                    .Sum(c => c.UnreadCount);
+                if (total > 0)
+                    AppLog.Write($"[BADGE] total={total} sel={_selectedChatId ?? "null"} readSet={_locallyReadChatIds.Count} hash={GetHashCode()}");
+                App.MainWindow.Title = total > 0 ? $"Buzzr ({total})" : "Buzzr";
                 var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
-                TaskbarBadge.SetBadge(hwnd, totalUnread);
+                TaskbarBadge.SetBadge(hwnd, total);
             });
         }
         catch { }
@@ -1547,6 +1557,8 @@ public sealed partial class ChatListControl : UserControl
                             updated.Preview = existing.Preview;
                         AppLog.Write($"[Refresh] {updated.Title}: existing.LA={existing.LastActivity}, updated.LA={updated.LastActivity}, preview='{updated.Preview?.Text}'");
                     }
+                    if (updated.Id == _selectedChatId)
+                        updated.UnreadCount = 0;
                     UpsertChatInList(updated);
                     ApplyFilters();
                 });
@@ -1557,6 +1569,8 @@ public sealed partial class ChatListControl : UserControl
 
     private void UpsertChatInList(BeeperChat chat)
     {
+        if (chat.Id == _selectedChatId)
+            chat.UnreadCount = 0;
         var idx = _allChats.FindIndex(c => c.Id == chat.Id);
         if (idx >= 0)
         {

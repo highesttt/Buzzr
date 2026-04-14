@@ -518,7 +518,17 @@ func (s *Server) handleUnmuteChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	chatID := r.PathValue("chatID")
-	if err := s.mc.MarkRead(r.Context(), chatID); err != nil {
+	var req struct {
+		EventID string `json:"eventId"`
+	}
+	readJSON(r, &req)
+	var err error
+	if req.EventID != "" {
+		err = s.mc.MarkRead(r.Context(), chatID, req.EventID)
+	} else {
+		err = s.mc.MarkRead(r.Context(), chatID)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "UNKNOWN_ERROR", err.Error())
 		return
 	}
@@ -822,7 +832,7 @@ func (s *Server) handleDownloadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, APIDownloadResponse{
-		Error: "Download to disk not yet implemented — use /v1/assets/serve instead",
+		Error: "Download to disk not yet implemented. Use /v1/assets/serve instead",
 	})
 }
 

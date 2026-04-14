@@ -137,7 +137,7 @@ if [ -n "$MSIX" ]; then
                 warn "Signing failed"
             fi
         else
-            warn "signtool.exe not found — MSIX is unsigned"
+            warn "signtool.exe not found, MSIX is unsigned"
         fi
     fi
 else
@@ -167,7 +167,7 @@ if $BUILD_MSI; then
     if [ $? -eq 0 ]; then
         ok "MSI: $UROOT/release/Buzzr-$VERSION-$PLATFORM.msi"
     else
-        warn "MSI build failed — make sure WiX is installed: dotnet tool install --global wix"
+        warn "MSI build failed. Make sure WiX is installed: dotnet tool install --global wix"
     fi
 fi
 

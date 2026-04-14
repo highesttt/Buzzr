@@ -229,7 +229,7 @@ func (mc *MatrixClient) StartLogin(ctx context.Context, email string) error {
 
 func (mc *MatrixClient) CompleteLogin(ctx context.Context, email, code string) (string, error) {
 	if mc.loginRequestID == "" {
-		return "", fmt.Errorf("no login in progress — call StartLogin first")
+		return "", fmt.Errorf("no login in progress; call StartLogin first")
 	}
 
 	verifyReq := map[string]interface{}{
@@ -388,7 +388,7 @@ func (mc *MatrixClient) StartSync(ctx context.Context) {
 	mc.mu.Unlock()
 
 	if mc.store.RoomCount() == 0 && mc.client.Store != nil {
-		log.Info().Msg("No persisted rooms — forcing full initial sync")
+		log.Info().Msg("No persisted rooms, forcing full initial sync")
 		mc.client.Store.SaveNextBatch(ctx, mc.userID, "")
 	}
 
@@ -467,7 +467,7 @@ func (mc *MatrixClient) VerificationReady(ctx context.Context, txnID id.Verifica
 		Str("txnID", string(txnID)).
 		Str("otherDevice", string(otherDeviceID)).
 		Bool("supportsSAS", supportsSAS).
-		Msg("Verification ready — other device accepted")
+		Msg("Verification ready, other device accepted")
 
 	mc.verifyState.mu.Lock()
 	mc.verifyState.Status = "ready"
@@ -547,7 +547,7 @@ func (mc *MatrixClient) requestSecretsAndImportBackup() {
 	log.Info().Msg("Checking if we got the backup key...")
 	backupSecret, err := machine.CryptoStore.GetSecret(ctx, "m.megolm_backup.v1")
 	if err != nil || backupSecret == "" {
-		log.Warn().Msg("Backup key not received from other device — old messages won't decrypt yet")
+		log.Warn().Msg("Backup key not received from other device. Old messages won't decrypt yet")
 		return
 	}
 
@@ -675,7 +675,7 @@ func (mc *MatrixClient) ensureVerificationHelper(ctx context.Context) error {
 	mc.mu.RUnlock()
 
 	if vh == nil {
-		return fmt.Errorf("verification helper could not be initialized — crypto may not be ready yet")
+		return fmt.Errorf("verification helper could not be initialized; crypto may not be ready yet")
 	}
 	return nil
 }
@@ -691,7 +691,7 @@ func (mc *MatrixClient) StartDeviceVerification(ctx context.Context) (string, er
 	mc.mu.RUnlock()
 
 	if vh == nil {
-		return "", fmt.Errorf("verification helper not initialized — try again after sync completes")
+		return "", fmt.Errorf("verification helper not initialized; try again after sync completes")
 	}
 
 	mc.verifyState.mu.Lock()
@@ -804,9 +804,18 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 	}
 
 	room.mu.Lock()
-	room.Timeline = append(room.Timeline, msg)
-	if len(room.Timeline) > 100 {
-		room.Timeline = room.Timeline[len(room.Timeline)-100:]
+	if msg.IsEdited {
+		for i, existing := range room.Timeline {
+			if existing.ID == msg.ID {
+				room.Timeline[i] = msg
+				break
+			}
+		}
+	} else {
+		room.Timeline = append(room.Timeline, msg)
+		if len(room.Timeline) > 100 {
+			room.Timeline = room.Timeline[len(room.Timeline)-100:]
+		}
 	}
 	room.mu.Unlock()
 
@@ -1229,8 +1238,19 @@ func (mc *MatrixClient) eventToMessage(evt *event.Event, room *Room) *Message {
 
 	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace {
 		if content.NewContent != nil {
+			origID := string(content.RelatesTo.EventID)
 			msg.Text = content.NewContent.Body
-			msg.ID = string(content.RelatesTo.EventID)
+			msg.ID = origID
+			msg.IsEdited = true
+			room.mu.RLock()
+			for _, existing := range room.Timeline {
+				if existing.ID == origID {
+					msg.Timestamp = existing.Timestamp
+					msg.SortKey = existing.SortKey
+					break
+				}
+			}
+			room.mu.RUnlock()
 		}
 	}
 
@@ -1435,10 +1455,10 @@ func (mc *MatrixClient) RemoveReaction(ctx context.Context, roomID, eventID, rea
 		return fmt.Errorf("not logged in")
 	}
 
-	return fmt.Errorf("reaction removal not yet implemented — requires reaction event tracking")
+	return fmt.Errorf("reaction removal not yet implemented; requires reaction event tracking")
 }
 
-func (mc *MatrixClient) MarkRead(ctx context.Context, roomID string) error {
+func (mc *MatrixClient) MarkRead(ctx context.Context, roomID string, clientEventID ...string) error {
 	mc.mu.RLock()
 	client := mc.client
 	mc.mu.RUnlock()
@@ -1446,23 +1466,52 @@ func (mc *MatrixClient) MarkRead(ctx context.Context, roomID string) error {
 		return fmt.Errorf("not logged in")
 	}
 
-	room := mc.store.GetRoom(roomID)
-	if room == nil || room.Preview == nil {
-		return nil
+	var evtID id.EventID
+	if len(clientEventID) > 0 && clientEventID[0] != "" {
+		evtID = id.EventID(clientEventID[0])
+	} else {
+		room := mc.store.GetRoom(roomID)
+		if room == nil || room.Preview == nil {
+			log.Info().Str("room", roomID).Bool("roomNil", room == nil).Msg("MarkRead: no room or preview")
+			return nil
+		}
+		evtID = id.EventID(room.Preview.EventID)
 	}
 
-	err := client.SendReceipt(ctx, id.RoomID(roomID), id.EventID(room.Preview.EventID), event.ReceiptTypeRead, nil)
+	log.Info().Str("room", roomID).Str("eventID", string(evtID)).Msg("MarkRead: sending receipt")
+
+	// Send public read receipt
+	err := client.SendReceipt(ctx, id.RoomID(roomID), evtID, event.ReceiptTypeRead, nil)
 	if err != nil {
-		return err
+		log.Info().Err(err).Str("room", roomID).Msg("MarkRead: SendReceipt m.read failed")
+	} else {
+		log.Info().Str("room", roomID).Msg("MarkRead: m.read sent OK")
 	}
 
-	err = client.SetReadMarkers(ctx, id.RoomID(roomID), &mautrix.ReqSetReadMarkers{
-		FullyRead: id.EventID(room.Preview.EventID),
-		Read:      id.EventID(room.Preview.EventID),
-	})
+	// Send private read receipt (needed by some bridges)
+	err2 := client.SendReceipt(ctx, id.RoomID(roomID), evtID, event.ReceiptTypeReadPrivate, nil)
+	if err2 != nil {
+		log.Info().Err(err2).Str("room", roomID).Msg("MarkRead: SendReceipt m.read.private failed")
+	} else {
+		log.Info().Str("room", roomID).Msg("MarkRead: m.read.private sent OK")
+	}
 
-	room.UnreadCount = 0
-	mc.store.SetRoom(room)
+	// Set fully read marker
+	err = client.SetReadMarkers(ctx, id.RoomID(roomID), &mautrix.ReqSetReadMarkers{
+		FullyRead:   evtID,
+		Read:        evtID,
+		ReadPrivate: evtID,
+	})
+	if err != nil {
+		log.Info().Err(err).Str("room", roomID).Msg("MarkRead: SetReadMarkers failed")
+	} else {
+		log.Info().Str("room", roomID).Msg("MarkRead: SetReadMarkers OK")
+	}
+
+	if r := mc.store.GetRoom(roomID); r != nil {
+		r.UnreadCount = 0
+		mc.store.SetRoom(r)
+	}
 
 	return err
 }
@@ -1586,7 +1635,7 @@ func (mc *MatrixClient) GetMessages(ctx context.Context, roomID string, limit in
 					SortKey:   strconv.FormatInt(int64(evt.Timestamp), 10),
 					IsSender:  evt.Sender == mc.userID,
 					Type:      "TEXT",
-					Text:      "[Encrypted message — unable to decrypt]",
+					Text:      "[Encrypted message, unable to decrypt]",
 				})
 				continue
 			}

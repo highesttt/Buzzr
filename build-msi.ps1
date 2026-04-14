@@ -19,7 +19,7 @@ function Fail($msg) { Write-Host "   $msg" -ForegroundColor Red; exit 1 }
 Step "Checking WiX toolset"
 $wixCmd = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wixCmd) {
-    Warn "WiX CLI not found — installing via dotnet tool"
+    Warn "WiX CLI not found, installing via dotnet tool"
     dotnet tool install --global wix
     if ($LASTEXITCODE -ne 0) { Fail "Failed to install WiX. Run manually: dotnet tool install --global wix" }
 
@@ -81,7 +81,7 @@ if (-not $SkipBuild -or -not (Test-Path (Join-Path $SourceDir "Buzzr.exe"))) {
 }
 
 if (-not (Test-Path (Join-Path $SourceDir "Buzzr.exe"))) {
-    Fail "Buzzr.exe not found in $SourceDir — build portable first or specify -SourceDir"
+    Fail "Buzzr.exe not found in $SourceDir. Build portable first or specify -SourceDir"
 }
 
 Step "Generating License.rtf"
