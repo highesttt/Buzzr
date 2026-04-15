@@ -8,7 +8,7 @@
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/License-PolyForm_NC_1.0-red?style=flat)](LICENSE)
 
-Buzzr is a native Windows 11 desktop client for [Beeper](https://beeper.com), the unified messaging platform.\
+Buzzr is an unofficial native Windows 11 desktop client for [Beeper](https://beeper.com), the unified messaging platform.\
 It aggregates all your chats (Discord, WhatsApp, Telegram, Signal, Instagram, Messenger, and more) into a single, beautiful WinUI 3 interface.\
 Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so you get real-time messaging with a native Windows experience.
 
@@ -141,6 +141,10 @@ Built from scratch with a Go sidecar bridge that handles the Matrix protocol, so
 ## Suggestions and Contributions 💡
 
 If you have any suggestions for improvements or new features, feel free to open an issue or submit a pull request on the [GitHub repository](https://github.com/highesttt/Buzzr).
+
+## Disclaimer ⚠️
+
+Buzzr is an **unofficial** third-party client for Beeper. It is **not affiliated with, sponsored by, or endorsed by** Beeper or Automattic in any way.
 
 ## Commit norms 📝
 
