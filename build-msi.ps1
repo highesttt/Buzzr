@@ -1,7 +1,7 @@
-# Usage: .\build-msi.ps1 [-Version "0.1.0.0"] [-Platform "x64"] [-SourceDir "release\portable"] [-SkipBuild]
+# Usage: .\build-msi.ps1 [-Version "0.2.0.0"] [-Platform "x64"] [-SourceDir "release\portable"] [-SkipBuild]
 
 param(
-    [string]$Version = "0.1.0.0",
+    [string]$Version = "0.2.0.0",
     [string]$Platform = "x64",
     [string]$SourceDir = "",
     [switch]$SkipBuild
