@@ -350,24 +350,22 @@ public sealed partial class ChatListControl : UserControl
         foreach (var (rootSpaceId, channels) in spaceGroups)
         {
             var latest = channels.OrderByDescending(c => c.LastActivity ?? "").First();
-            var accountId = latest.AccountId;
 
-            var collapsed = new BeeperChat
+            result.Add(new BeeperChat
             {
-                Id = rootSpaceId,
-                AccountId = accountId,
-                Title = GetSpaceName(accountId, rootSpaceId) ?? "Server",
-                AvatarUrl = GetSpaceAvatar(accountId, rootSpaceId),
+                Id = latest.Id,
+                AccountId = latest.AccountId,
+                Title = latest.Title,
+                AvatarUrl = GetSpaceAvatar(latest.AccountId, rootSpaceId),
                 UnreadCount = channels.Sum(c => c.UnreadCount),
-                LastActivity = channels.Max(c => c.LastActivity),
+                LastActivity = latest.LastActivity,
                 Preview = latest.Preview,
                 SpaceId = rootSpaceId,
                 IsMuted = channels.All(c => c.IsMuted),
                 IsPinned = channels.Any(c => c.IsPinned),
-            };
-
-            _collapsedSpaceIds.Add(rootSpaceId);
-            result.Add(collapsed);
+                Participants = latest.Participants,
+                Type = latest.Type,
+            });
         }
 
         return result;
@@ -807,12 +805,6 @@ public sealed partial class ChatListControl : UserControl
 
     private void SelectChat(BeeperChat chat)
     {
-        if (_collapsedSpaceIds.Contains(chat.Id))
-        {
-            FilterByAccount(chat.AccountId, chat.Id);
-            return;
-        }
-
         _selectedChatId = chat.Id;
         _locallyReadChatIds.Add(chat.Id);
         bool hadUnread = chat.UnreadCount > 0;
@@ -898,7 +890,9 @@ public sealed partial class ChatListControl : UserControl
         titleStack.Children.Add(Lbl(displayTitle, 13, Fg1, true, maxLines: 1));
         info.Children.Add(titleStack);
 
-        var networkName = GetNetworkName(chat);
+        var networkName = !string.IsNullOrEmpty(chat.SpaceId)
+            ? GetSpaceName(chat.AccountId, chat.SpaceId) ?? GetNetworkName(chat)
+            : GetNetworkName(chat);
         info.Children.Add(Lbl(!string.IsNullOrEmpty(networkName) ? networkName : "Chat", 11, Fg3, margin: new Thickness(0, 1, 0, 0), maxLines: 1));
 
         var previewText = _censorMode ? CensorPreview(chat) : GetPreviewText(chat.Preview);

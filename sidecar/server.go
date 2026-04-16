@@ -588,16 +588,16 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		msgType := determineMsgType(req.Attachment.MimeType)
-
-		text := req.Text
-		if text == "" {
-			text = req.Attachment.FileName
+		width, height := 0, 0
+		if req.Attachment.Size != nil {
+			width = req.Attachment.Size.Width
+			height = req.Attachment.Size.Height
 		}
-		_ = mxcURI
-		_ = msgType
 
-		eventID, err = s.mc.SendMessage(r.Context(), chatID, text, req.ReplyToMessageID)
+		eventID, err = s.mc.SendMediaMessage(
+			r.Context(), chatID, mxcURI,
+			req.Attachment.MimeType, req.Attachment.FileName,
+			req.Text, width, height, 0, req.ReplyToMessageID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "UNKNOWN_ERROR", err.Error())
 			return

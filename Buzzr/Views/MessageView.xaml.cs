@@ -47,6 +47,8 @@ public sealed partial class MessageView : UserControl
         public byte[] Bytes { get; set; } = Array.Empty<byte>();
         public string? LocalPath { get; set; }
         public BitmapImage? Thumbnail { get; set; }
+        public int? Width { get; set; }
+        public int? Height { get; set; }
         public bool IsImage => MimeType.StartsWith("image/");
     }
     private readonly List<StagedAttachment> _stagedAttachments = [];
@@ -2791,8 +2793,11 @@ public sealed partial class MessageView : UserControl
                     if (asset?.UploadID != null)
                     {
                         var caption = (i == attachments.Count - 1 && hasText) ? text : null;
+                        int? sendWidth = att.Width ?? asset.Width;
+                        int? sendHeight = att.Height ?? asset.Height;
                         var attachResult = await App.Api.SendMessageWithAttachmentAsync(
-                            _chatId, caption, asset.UploadID, att.MimeType, att.FileName);
+                            _chatId, caption, asset.UploadID, att.MimeType, att.FileName,
+                            sendWidth, sendHeight);
 
                         var resolvedSrc = att.LocalPath;
                         if (!string.IsNullOrEmpty(resolvedSrc) && !resolvedSrc.StartsWith("file://"))
@@ -2888,6 +2893,16 @@ public sealed partial class MessageView : UserControl
                     writer.WriteBytes(bytes);
                     await writer.StoreAsync();
                     stream.Seek(0);
+
+                    try
+                    {
+                        var dec = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+                        staged.Width = (int)dec.PixelWidth;
+                        staged.Height = (int)dec.PixelHeight;
+                    }
+                    catch { }
+
+                    stream.Seek(0);
                     staged.Thumbnail = new BitmapImage();
                     staged.Thumbnail.DecodePixelWidth = 80;
                     await staged.Thumbnail.SetSourceAsync(stream);
@@ -2932,7 +2947,9 @@ public sealed partial class MessageView : UserControl
             {
                 FileName = fileName,
                 MimeType = "image/png",
-                Bytes = pngBytes
+                Bytes = pngBytes,
+                Width = (int)decoder.PixelWidth,
+                Height = (int)decoder.PixelHeight
             };
 
             try
@@ -3396,7 +3413,13 @@ public sealed partial class MessageView : UserControl
                         var base64 = Convert.ToBase64String(att.Bytes);
                         var asset = await App.Api.UploadBase64Async(base64, att.FileName, att.MimeType);
                         if (asset?.UploadID != null)
-                            await App.Api.SendMessageWithAttachmentAsync(sm.ChatId, sm.Text, asset.UploadID, att.MimeType, att.FileName);
+                        {
+                            int? sendWidth = att.Width ?? asset.Width;
+                            int? sendHeight = att.Height ?? asset.Height;
+                            await App.Api.SendMessageWithAttachmentAsync(
+                                sm.ChatId, sm.Text, asset.UploadID, att.MimeType, att.FileName,
+                                sendWidth, sendHeight);
+                        }
                     }
                 }
                 else if (!string.IsNullOrEmpty(sm.Text))
@@ -3665,6 +3688,16 @@ public sealed partial class MessageView : UserControl
                             var writer = new Windows.Storage.Streams.DataWriter(stream);
                             writer.WriteBytes(bytes);
                             await writer.StoreAsync();
+                            stream.Seek(0);
+
+                            try
+                            {
+                                var dec = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+                                staged.Width = (int)dec.PixelWidth;
+                                staged.Height = (int)dec.PixelHeight;
+                            }
+                            catch { }
+
                             stream.Seek(0);
                             staged.Thumbnail = new BitmapImage();
                             staged.Thumbnail.DecodePixelWidth = 80;

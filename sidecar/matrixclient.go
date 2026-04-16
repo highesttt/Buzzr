@@ -1419,6 +1419,59 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, roomID, text string, re
 	return string(resp.EventID), nil
 }
 
+func (mc *MatrixClient) SendMediaMessage(ctx context.Context, roomID, mxcURI, mimeType, fileName, caption string, width, height int, fileSize int64, replyTo string) (string, error) {
+	mc.mu.RLock()
+	client := mc.client
+	mc.mu.RUnlock()
+	if client == nil {
+		return "", fmt.Errorf("not logged in")
+	}
+
+	var msgType event.MessageType
+	switch {
+	case strings.HasPrefix(mimeType, "image/"):
+		msgType = event.MsgImage
+	case strings.HasPrefix(mimeType, "video/"):
+		msgType = event.MsgVideo
+	case strings.HasPrefix(mimeType, "audio/"):
+		msgType = event.MsgAudio
+	default:
+		msgType = event.MsgFile
+	}
+
+	body := fileName
+	if caption != "" {
+		body = caption
+	}
+
+	content := &event.MessageEventContent{
+		MsgType: msgType,
+		Body:    body,
+		URL:     id.ContentURIString(mxcURI),
+		Info: &event.FileInfo{
+			MimeType: mimeType,
+			Size:     int(fileSize),
+			Width:    width,
+			Height:   height,
+		},
+	}
+
+	if replyTo != "" {
+		content.RelatesTo = &event.RelatesTo{
+			InReplyTo: &event.InReplyTo{
+				EventID: id.EventID(replyTo),
+			},
+		}
+	}
+
+	resp, err := client.SendMessageEvent(ctx, id.RoomID(roomID), event.EventMessage, content)
+	if err != nil {
+		return "", fmt.Errorf("sending media message: %w", err)
+	}
+
+	return string(resp.EventID), nil
+}
+
 func (mc *MatrixClient) EditMessage(ctx context.Context, roomID, eventID, newText string) error {
 	mc.mu.RLock()
 	client := mc.client
