@@ -850,6 +850,30 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 		"chat": RoomToAPIChat(room, baseURL),
 	})
 
+	if msg.Type == "TEXT" && msg.LinkPreview == nil {
+		if firstURL := extractFirstURL(msg.Text); firstURL != "" {
+			capMsg := msg
+			capRoom := room
+			capURL := firstURL
+			go func() {
+				previewCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				preview := mc.FetchURLPreview(previewCtx, capURL)
+				if preview == nil {
+					return
+				}
+				capRoom.mu.Lock()
+				capMsg.LinkPreview = preview
+				capRoom.mu.Unlock()
+				mc.store.SaveMessage(capMsg)
+				mc.wsHub.BroadcastRaw(map[string]interface{}{
+					"type":    "message.upserted",
+					"message": MessageToAPIMessage(capMsg, baseURL),
+				})
+			}()
+		}
+	}
+
 	log.Debug().
 		Str("room", roomID).
 		Str("sender", string(evt.Sender)).
@@ -857,40 +881,113 @@ func (mc *MatrixClient) handleMessage(ctx context.Context, evt *event.Event) {
 		Msg("Message received")
 }
 
+func (mc *MatrixClient) getBaseURL() string {
+	baseURL := fmt.Sprintf("http://localhost:%d", mc.cfg.Settings.Port)
+	if baseURL == "http://localhost:0" {
+		baseURL = "http://localhost:29110"
+	}
+	return baseURL
+}
+
 func (mc *MatrixClient) handleReaction(ctx context.Context, evt *event.Event) {
 	content := evt.Content.AsReaction()
 	if content == nil || content.RelatesTo.EventID == "" {
 		return
 	}
+	targetEventID := string(content.RelatesTo.EventID)
+	key := content.RelatesTo.Key
+	sender := string(evt.Sender)
+	reactionID := string(evt.ID)
+	roomID := string(evt.RoomID)
 
 	log.Debug().
-		Str("room", string(evt.RoomID)).
-		Str("target", string(content.RelatesTo.EventID)).
-		Str("key", content.RelatesTo.Key).
+		Str("room", roomID).
+		Str("target", targetEventID).
+		Str("key", key).
+		Str("sender", sender).
 		Msg("Reaction received")
 
-	mc.wsHub.Broadcast(WSEvent{
-		Type: "message.upserted",
-		Data: map[string]interface{}{
-			"roomID":      string(evt.RoomID),
-			"eventID":     string(content.RelatesTo.EventID),
-			"reactionKey": content.RelatesTo.Key,
-			"sender":      string(evt.Sender),
-		},
+	room := mc.store.EnsureRoom(roomID)
+	var targetMsg *Message
+	room.mu.Lock()
+	for _, m := range room.Timeline {
+		if m.ID == targetEventID || m.EventID == targetEventID {
+			targetMsg = m
+			break
+		}
+	}
+	if targetMsg != nil {
+		alreadyExists := false
+		for _, r := range targetMsg.Reactions {
+			if r.ParticipantID == sender && r.ReactionKey == key {
+				alreadyExists = true
+				break
+			}
+		}
+		if !alreadyExists {
+			targetMsg.Reactions = append(targetMsg.Reactions, &Reaction{
+				ID:            reactionID,
+				ReactionKey:   key,
+				ParticipantID: sender,
+				IsEmoji:       true,
+			})
+		}
+	}
+	room.mu.Unlock()
+
+	if targetMsg == nil {
+		return
+	}
+
+	mc.store.SaveMessage(targetMsg)
+
+	mc.wsHub.BroadcastRaw(map[string]interface{}{
+		"type":    "message.upserted",
+		"message": MessageToAPIMessage(targetMsg, mc.getBaseURL()),
 	})
 }
 
 func (mc *MatrixClient) handleRedaction(ctx context.Context, evt *event.Event) {
+	redactedID := string(evt.Redacts)
+	roomID := string(evt.RoomID)
 	log.Debug().
-		Str("room", string(evt.RoomID)).
-		Str("redacts", string(evt.Redacts)).
+		Str("room", roomID).
+		Str("redacts", redactedID).
 		Msg("Redaction received")
+
+	room := mc.store.EnsureRoom(roomID)
+	var targetMsg *Message
+	var isReactionRedaction bool
+	room.mu.Lock()
+	for _, m := range room.Timeline {
+		for i, r := range m.Reactions {
+			if r.ID == redactedID {
+				m.Reactions = append(m.Reactions[:i], m.Reactions[i+1:]...)
+				targetMsg = m
+				isReactionRedaction = true
+				break
+			}
+		}
+		if targetMsg != nil {
+			break
+		}
+	}
+	room.mu.Unlock()
+
+	if isReactionRedaction && targetMsg != nil {
+		mc.store.SaveMessage(targetMsg)
+		mc.wsHub.BroadcastRaw(map[string]interface{}{
+			"type":    "message.upserted",
+			"message": MessageToAPIMessage(targetMsg, mc.getBaseURL()),
+		})
+		return
+	}
 
 	mc.wsHub.Broadcast(WSEvent{
 		Type: "message.deleted",
 		Data: map[string]string{
-			"chatID":    string(evt.RoomID),
-			"messageID": string(evt.Redacts),
+			"chatID":    roomID,
+			"messageID": redactedID,
 		},
 	})
 }
@@ -993,6 +1090,61 @@ func (mc *MatrixClient) handleTopic(ctx context.Context, evt *event.Event) {
 }
 
 func (mc *MatrixClient) handleReceipt(ctx context.Context, evt *event.Event) {
+	content := evt.Content.AsReceipt()
+	if content == nil {
+		return
+	}
+	roomID := string(evt.RoomID)
+	room := mc.store.EnsureRoom(roomID)
+	selfID := string(mc.userID)
+
+	room.mu.Lock()
+	if room.ReadReceipts == nil {
+		room.ReadReceipts = make(map[string]*ReadReceipt)
+	}
+	type receiptNotif struct {
+		userID  string
+		eventID string
+		ts      time.Time
+	}
+	notifs := []receiptNotif{}
+	for eventID, receiptsByType := range *content {
+		for receiptType, users := range receiptsByType {
+			if receiptType != event.ReceiptTypeRead {
+				continue
+			}
+			for userID, receiptInfo := range users {
+				uid := string(userID)
+				if uid == selfID {
+					continue
+				}
+				ts := receiptInfo.Timestamp
+				existing, ok := room.ReadReceipts[uid]
+				if ok && existing.Timestamp.After(ts) {
+					continue
+				}
+				room.ReadReceipts[uid] = &ReadReceipt{
+					UserID:    uid,
+					EventID:   string(eventID),
+					Timestamp: ts,
+				}
+				notifs = append(notifs, receiptNotif{uid, string(eventID), ts})
+			}
+		}
+	}
+	room.mu.Unlock()
+
+	for _, n := range notifs {
+		mc.wsHub.Broadcast(WSEvent{
+			Type: "receipt",
+			Data: map[string]interface{}{
+				"chatID":    roomID,
+				"userID":    n.userID,
+				"eventID":   n.eventID,
+				"timestamp": n.ts.Format(time.RFC3339Nano),
+			},
+		})
+	}
 }
 
 func (mc *MatrixClient) waitForTagsAndNotify(ctx context.Context) {
@@ -1057,6 +1209,80 @@ func (mc *MatrixClient) handleRoomTags(ctx context.Context, evt *event.Event) {
 }
 
 func (mc *MatrixClient) handleTyping(ctx context.Context, evt *event.Event) {
+	content := evt.Content.AsTyping()
+	if content == nil {
+		return
+	}
+	selfID := string(mc.userID)
+	userIDs := make([]string, 0, len(content.UserIDs))
+	for _, uid := range content.UserIDs {
+		if string(uid) == selfID {
+			continue
+		}
+		userIDs = append(userIDs, string(uid))
+	}
+	mc.wsHub.Broadcast(WSEvent{
+		Type: "typing",
+		Data: map[string]interface{}{
+			"chatID":  string(evt.RoomID),
+			"userIDs": userIDs,
+		},
+	})
+}
+
+func (mc *MatrixClient) SendTyping(ctx context.Context, roomID string, typing bool) error {
+	mc.mu.RLock()
+	client := mc.client
+	mc.mu.RUnlock()
+	if client == nil {
+		return fmt.Errorf("not logged in")
+	}
+	var timeout time.Duration
+	if typing {
+		timeout = 10 * time.Second
+	}
+	_, err := client.UserTyping(ctx, id.RoomID(roomID), typing, timeout)
+	return err
+}
+
+var urlRegex = regexp.MustCompile(`https?://[^\s<>\]]+`)
+
+func extractFirstURL(text string) string {
+	if text == "" {
+		return ""
+	}
+	match := urlRegex.FindString(text)
+	return match
+}
+
+func (mc *MatrixClient) FetchURLPreview(ctx context.Context, previewURL string) *LinkPreview {
+	mc.mu.RLock()
+	client := mc.client
+	mc.mu.RUnlock()
+	if client == nil {
+		return nil
+	}
+	resp, err := client.GetURLPreview(ctx, previewURL)
+	if err != nil {
+		log.Warn().Err(err).Str("url", previewURL).Msg("URL preview fetch failed")
+		return nil
+	}
+	if resp == nil {
+		log.Debug().Str("url", previewURL).Msg("URL preview: nil response")
+		return nil
+	}
+	log.Debug().Str("url", previewURL).Str("title", resp.Title).Str("img", string(resp.ImageURL)).Msg("URL preview fetched")
+	if resp.Title == "" && resp.Description == "" && resp.ImageURL == "" {
+		return nil
+	}
+	return &LinkPreview{
+		URL:         previewURL,
+		Title:       resp.Title,
+		Description: resp.Description,
+		ImageMXC:    string(resp.ImageURL),
+		ImageWidth:  int(resp.ImageWidth),
+		ImageHeight: int(resp.ImageHeight),
+	}
 }
 
 func (mc *MatrixClient) onSyncResponse(ctx context.Context, resp *mautrix.RespSync, since string) bool {
@@ -1271,6 +1497,7 @@ func (mc *MatrixClient) eventToMessage(evt *event.Event, room *Room) *Message {
 			msg.Text = content.NewContent.Body
 			msg.ID = origID
 			msg.IsEdited = true
+			msg.EditedAt = time.UnixMilli(evt.Timestamp)
 			room.mu.RLock()
 			for _, existing := range room.Timeline {
 				if existing.ID == origID {

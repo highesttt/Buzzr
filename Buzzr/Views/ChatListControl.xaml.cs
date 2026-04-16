@@ -27,6 +27,8 @@ public sealed partial class ChatListControl : UserControl
 
     public event Action<BeeperChat>? ChatSelected;
     public event Action<string, string>? MessageReceived;
+    public event Action<string, List<string>>? TypingChanged;
+    public event Action<string, string, string, string>? ReceiptReceived;
     public event Action? ChatsLoaded;
 
     private static string? _selectedChatId;
@@ -1505,6 +1507,48 @@ public sealed partial class ChatListControl : UserControl
             else if (evtType == "spaces.resolved")
             {
                 DispatcherQueue.TryEnqueue(() => _ = ReloadChatsAsync());
+            }
+            else if (evtType == "typing")
+            {
+                string? chatId = null;
+                var users = new List<string>();
+                if (root.TryGetProperty("data", out var dEl) || root.TryGetProperty("Data", out dEl))
+                {
+                    if (dEl.TryGetProperty("chatID", out var cEl)) chatId = cEl.GetString();
+                    if (dEl.TryGetProperty("userIDs", out var uEl) && uEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in uEl.EnumerateArray())
+                        {
+                            if (el.ValueKind == JsonValueKind.String)
+                                users.Add(el.GetString()!);
+                        }
+                    }
+                }
+                if (!string.IsNullOrEmpty(chatId))
+                {
+                    var capId = chatId;
+                    var capUsers = users;
+                    DispatcherQueue.TryEnqueue(() => TypingChanged?.Invoke(capId, capUsers));
+                }
+            }
+            else if (evtType == "receipt")
+            {
+                string? chatId = null, userId = null, eventId = null, ts = null;
+                if (root.TryGetProperty("data", out var dEl) || root.TryGetProperty("Data", out dEl))
+                {
+                    if (dEl.TryGetProperty("chatID", out var cEl)) chatId = cEl.GetString();
+                    if (dEl.TryGetProperty("userID", out var uEl)) userId = uEl.GetString();
+                    if (dEl.TryGetProperty("eventID", out var eEl)) eventId = eEl.GetString();
+                    if (dEl.TryGetProperty("timestamp", out var tEl)) ts = tEl.GetString();
+                }
+                if (!string.IsNullOrEmpty(chatId) && !string.IsNullOrEmpty(userId) && !string.IsNullOrEmpty(eventId))
+                {
+                    var cChatId = chatId;
+                    var cUserId = userId;
+                    var cEventId = eventId;
+                    var cTs = ts ?? "";
+                    DispatcherQueue.TryEnqueue(() => ReceiptReceived?.Invoke(cChatId, cUserId, cEventId, cTs));
+                }
             }
             else if (evtType == "tags.updated")
             {

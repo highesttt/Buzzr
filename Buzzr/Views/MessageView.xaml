@@ -232,6 +232,17 @@
             </ScrollViewer>
         </Border>
 
+        <StackPanel x:Name="TypingIndicator" Grid.Row="6"
+                    Orientation="Horizontal" Spacing="6"
+                    Padding="20,4,20,2" Visibility="Collapsed"
+                    Background="#242424"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,72">
+            <TextBlock Text="•••" FontSize="10" Foreground="#A1A1A1" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TypingIndicatorText" FontSize="11" Foreground="#A1A1A1"
+                       FontStyle="Italic" VerticalAlignment="Center"/>
+        </StackPanel>
+
         <Border x:Name="Composer" Grid.Row="6"
                 Background="#242424" BorderBrush="#1A1E20"
                 BorderThickness="0,1,0,0" Padding="16,12,16,16"

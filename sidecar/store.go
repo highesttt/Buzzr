@@ -45,6 +45,7 @@ type Room struct {
 	Topic          string
 	JoinRule       string
 	DirectUserID   string
+	ReadReceipts   map[string]*ReadReceipt
 }
 
 func (r *Room) GetMembersSnapshot() []*Member {
@@ -91,7 +92,24 @@ type Message struct {
 	EventID         string
 	Redacted        bool
 	IsEdited        bool
+	EditedAt        time.Time
 	Mentions        []MentionInfo
+	LinkPreview     *LinkPreview
+}
+
+type LinkPreview struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	ImageMXC    string `json:"imageMxc,omitempty"`
+	ImageWidth  int    `json:"imageWidth,omitempty"`
+	ImageHeight int    `json:"imageHeight,omitempty"`
+}
+
+type ReadReceipt struct {
+	UserID    string    `json:"userId"`
+	EventID   string    `json:"eventId"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type MentionInfo struct {

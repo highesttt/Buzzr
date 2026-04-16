@@ -96,22 +96,33 @@ type APIChatsResponse struct {
 
 
 type APIMessage struct {
-	ID              string          `json:"id"`
-	ChatID          string          `json:"chatID"`
-	AccountID       string          `json:"accountID"`
-	SenderID        string          `json:"senderID"`
-	SenderName      string          `json:"senderName,omitempty"`
-	Timestamp       string          `json:"timestamp"`
-	SortKey         string          `json:"sortKey"`
-	Type            string          `json:"type,omitempty"`
-	Text            string          `json:"text,omitempty"`
-	IsSender        bool            `json:"isSender,omitempty"`
-	IsUnread        bool            `json:"isUnread,omitempty"`
-	LinkedMessageID string          `json:"linkedMessageID,omitempty"`
-	Attachments     []APIAttachment `json:"attachments,omitempty"`
-	Reactions       []APIReaction   `json:"reactions,omitempty"`
-	Mentions        []APIMention    `json:"mentions,omitempty"`
-	IsEdited        bool            `json:"isEdited,omitempty"`
+	ID              string           `json:"id"`
+	ChatID          string           `json:"chatID"`
+	AccountID       string           `json:"accountID"`
+	SenderID        string           `json:"senderID"`
+	SenderName      string           `json:"senderName,omitempty"`
+	Timestamp       string           `json:"timestamp"`
+	SortKey         string           `json:"sortKey"`
+	Type            string           `json:"type,omitempty"`
+	Text            string           `json:"text,omitempty"`
+	IsSender        bool             `json:"isSender,omitempty"`
+	IsUnread        bool             `json:"isUnread,omitempty"`
+	LinkedMessageID string           `json:"linkedMessageID,omitempty"`
+	Attachments     []APIAttachment  `json:"attachments,omitempty"`
+	Reactions       []APIReaction    `json:"reactions,omitempty"`
+	Mentions        []APIMention     `json:"mentions,omitempty"`
+	IsEdited        bool             `json:"isEdited,omitempty"`
+	EditedAt        string           `json:"editedAt,omitempty"`
+	LinkPreview     *APILinkPreview  `json:"linkPreview,omitempty"`
+}
+
+type APILinkPreview struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	ImageURL    string `json:"imageUrl,omitempty"`
+	ImageWidth  int    `json:"imageWidth,omitempty"`
+	ImageHeight int    `json:"imageHeight,omitempty"`
 }
 
 type APIMention struct {
@@ -400,6 +411,24 @@ func MessageToAPIMessage(msg *Message, sidecarBaseURL string) APIMessage {
 				DisplayName: m.DisplayName,
 			}
 		}
+	}
+
+	if !msg.EditedAt.IsZero() {
+		apiMsg.EditedAt = msg.EditedAt.Format(time.RFC3339Nano)
+	}
+
+	if msg.LinkPreview != nil {
+		lp := &APILinkPreview{
+			URL:         msg.LinkPreview.URL,
+			Title:       msg.LinkPreview.Title,
+			Description: msg.LinkPreview.Description,
+			ImageWidth:  msg.LinkPreview.ImageWidth,
+			ImageHeight: msg.LinkPreview.ImageHeight,
+		}
+		if msg.LinkPreview.ImageMXC != "" {
+			lp.ImageURL = fmt.Sprintf("%s/v1/assets/serve?uri=%s", sidecarBaseURL, url.QueryEscape(msg.LinkPreview.ImageMXC))
+		}
+		apiMsg.LinkPreview = lp
 	}
 
 	return apiMsg

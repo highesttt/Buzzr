@@ -23,6 +23,10 @@ public sealed partial class MessageView : UserControl
     private Dictionary<string, BeeperUser> _participantMap = [];
     private Dictionary<string, BeeperMessage> _messageMap = [];
     private List<BeeperMessage> _allMessages = [];
+    private Dictionary<string, BeeperReadReceipt> _roomReadReceipts = [];
+    private HashSet<string> _typingUsers = [];
+    private DispatcherTimer? _typingStopTimer;
+    private bool _sentTypingStart;
     private string? _msgCursor;
     private bool _msgHasMore;
     private bool _isLoadingMore;
@@ -71,7 +75,11 @@ public sealed partial class MessageView : UserControl
         {
             SendBtn.IsEnabled = !string.IsNullOrWhiteSpace(MsgInput.Text) || _stagedAttachments.Count > 0;
             UpdateMentionPopup();
+            HandleTypingInput();
         };
+
+        _typingStopTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _typingStopTimer.Tick += (s, e) => { _typingStopTimer?.Stop(); SendTypingStop(); };
 
         SendBtn.Click += (s, e) => _ = SendAsync();
 
@@ -429,7 +437,7 @@ public sealed partial class MessageView : UserControl
         try
         {
             var msg = JsonSerializer.Deserialize<BeeperMessage>(messageJson, _json);
-            if (msg == null || msg.Type == "REACTION") return;
+            if (msg == null) return;
 
             if (_messageMap.ContainsKey(msg.Id))
             {
@@ -437,13 +445,19 @@ public sealed partial class MessageView : UserControl
                 if (!string.IsNullOrEmpty(existing.Text) && existing.Text != msg.Text)
                     existing.IsEdited = true;
                 if (msg.IsEdited) existing.IsEdited = true;
+                if (!string.IsNullOrEmpty(msg.EditedAt)) existing.EditedAt = msg.EditedAt;
                 existing.Text = msg.Text;
                 existing.Reactions = msg.Reactions;
                 existing.Attachments = msg.Attachments;
                 existing.Type = msg.Type;
+                if (msg.LinkPreview != null) existing.LinkPreview = msg.LinkPreview;
+                if (existing.Status == MessageStatus.Sending || existing.Status == MessageStatus.Failed)
+                    existing.Status = MessageStatus.Sent;
                 UpdateBubbleForMessage(existing);
                 return;
             }
+
+            if (msg.Type == "REACTION") return;
 
             if (string.IsNullOrEmpty(msg.Text) && (msg.Attachments == null || msg.Attachments.Count == 0)
                 && msg.Type == "TEXT") return;
@@ -506,6 +520,18 @@ public sealed partial class MessageView : UserControl
         }
     }
 
+    private void UpdateBubbleTag(string oldId, string newId)
+    {
+        for (int i = 0; i < MsgStack.Children.Count; i++)
+        {
+            if (MsgStack.Children[i] is FrameworkElement el && el.Tag as string == oldId)
+            {
+                el.Tag = newId;
+                return;
+            }
+        }
+    }
+
     private void ToggleChatSearch()
     {
         if (ChatSearchBar.Visibility == Visibility.Visible)
@@ -561,6 +587,12 @@ public sealed partial class MessageView : UserControl
 
     public async Task LoadChat(BeeperChat chat)
     {
+        SendTypingStop();
+        _typingStopTimer?.Stop();
+        _typingUsers.Clear();
+        if (TypingIndicator != null) TypingIndicator.Visibility = Visibility.Collapsed;
+        _roomReadReceipts.Clear();
+
         _chatId = chat.Id;
         _loadChatCts?.Cancel();
         _loadChatCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -806,6 +838,70 @@ public sealed partial class MessageView : UserControl
             lastSender = m.SenderId;
             lastTimestamp = m.Timestamp;
         }
+
+        AppendReadReceiptRow();
+    }
+
+    private void AppendReadReceiptRow()
+    {
+        if (_currentChat == null || _allMessages.Count == 0) return;
+
+        BeeperMessage? lastOwn = null;
+        for (int i = _allMessages.Count - 1; i >= 0; i--)
+        {
+            if (_allMessages[i].IsSender) { lastOwn = _allMessages[i]; break; }
+        }
+        if (lastOwn == null) return;
+
+        var readers = GetReadersForMessage(lastOwn);
+        if (readers.Count == 0) return;
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 2, 10, 8),
+            Spacing = 4,
+            Tag = "read_receipt_row",
+        };
+        if (_currentChat.Type == "single" || readers.Count <= 1)
+        {
+            row.Children.Add(Lbl("Seen", 10, Fg3));
+        }
+        else
+        {
+            foreach (var reader in readers.Take(5))
+            {
+                if (_participantMap.TryGetValue(reader.UserId, out var user) && !string.IsNullOrEmpty(user.ImgUrl))
+                {
+                    var bmp = new BitmapImage(new Uri(user.ImgUrl)) { DecodePixelWidth = 14, DecodePixelHeight = 14 };
+                    row.Children.Add(new Border
+                    {
+                        Width = 14, Height = 14, CornerRadius = new CornerRadius(7),
+                        Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill, Width = 14, Height = 14 }
+                    });
+                }
+                else
+                {
+                    var name = user?.FullName ?? user?.Username ?? reader.UserId;
+                    row.Children.Add(Avatar(name ?? "?", 14));
+                }
+            }
+        }
+        MsgStack.Children.Add(row);
+    }
+
+    private List<BeeperReadReceipt> GetReadersForMessage(BeeperMessage m)
+    {
+        var readers = new List<BeeperReadReceipt>();
+        if (_roomReadReceipts == null || string.IsNullOrEmpty(m.Id)) return readers;
+        foreach (var kvp in _roomReadReceipts)
+        {
+            if (_participantMap.TryGetValue(kvp.Key, out var user) && user.IsSelf) continue;
+            if (kvp.Value.EventId == m.Id)
+                readers.Add(kvp.Value);
+        }
+        return readers;
     }
 
     private void UpdateHeaderAvatar(BeeperChat chat)
@@ -910,9 +1006,48 @@ public sealed partial class MessageView : UserControl
         }
 
         var timeStr = MessageTime(m.Timestamp);
-        if (m.IsEdited) timeStr += "  (edited)";
-        content.Children.Add(Lbl(timeStr, 10, isOwn ? SentFg : Fg3,
-            margin: new Thickness(0, 2, 0, 0)));
+        if (m.IsEdited && !string.IsNullOrEmpty(m.EditedAt))
+            timeStr += $"  (edited {MessageTime(m.EditedAt)})";
+        else if (m.IsEdited)
+            timeStr += "  (edited)";
+
+        var timeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Margin = new Thickness(0, 2, 0, 0),
+            HorizontalAlignment = isOwn ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        };
+        timeRow.Children.Add(Lbl(timeStr, 10, isOwn ? SentFg : Fg3));
+        if (isOwn && m.Status != MessageStatus.None)
+        {
+            string? glyph = m.Status switch
+            {
+                MessageStatus.Sending => "\uE916",
+                MessageStatus.Sent => "\uE73E",
+                MessageStatus.Failed => "\uE7BA",
+                _ => null,
+            };
+            if (glyph != null)
+            {
+                var statusIcon = new FontIcon
+                {
+                    Glyph = glyph,
+                    FontSize = 10,
+                    Foreground = m.Status == MessageStatus.Failed
+                        ? B(Windows.UI.Color.FromArgb(255, 220, 80, 80))
+                        : B(isOwn ? SentFg : Fg3),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                timeRow.Children.Add(statusIcon);
+            }
+        }
+        content.Children.Add(timeRow);
+
+        if (m.LinkPreview != null && !string.IsNullOrEmpty(m.LinkPreview.Url))
+        {
+            content.Children.Add(BuildLinkPreviewCard(m.LinkPreview, isOwn));
+        }
 
         if (m.Reactions?.Count > 0)
         {
@@ -1277,8 +1412,12 @@ public sealed partial class MessageView : UserControl
     {
         if (_chatId == null) return;
         m.Reactions ??= [];
-        m.Reactions.Add(new BeeperReaction { ReactionKey = emoji, ParticipantID = "self" });
-        UpdateBubbleForMessage(m);
+        bool alreadyHasSelf = m.Reactions.Any(r => r.ReactionKey == emoji && r.ParticipantID == "self");
+        if (!alreadyHasSelf)
+        {
+            m.Reactions.Add(new BeeperReaction { ReactionKey = emoji, ParticipantID = "self" });
+            UpdateBubbleForMessage(m);
+        }
         try
         {
             await App.Api.AddReactionAsync(_chatId, m.Id, emoji);
@@ -1308,6 +1447,129 @@ public sealed partial class MessageView : UserControl
             }
         }
         catch { }
+    }
+
+    private void HandleTypingInput()
+    {
+        if (string.IsNullOrEmpty(_chatId)) return;
+        if (string.IsNullOrWhiteSpace(MsgInput.Text))
+        {
+            if (_sentTypingStart) SendTypingStop();
+            return;
+        }
+        if (!_sentTypingStart)
+        {
+            _sentTypingStart = true;
+            var cid = _chatId;
+            _ = App.Api.SendTypingAsync(cid, true);
+        }
+        _typingStopTimer?.Stop();
+        _typingStopTimer?.Start();
+    }
+
+    private void SendTypingStop()
+    {
+        if (!_sentTypingStart || string.IsNullOrEmpty(_chatId)) return;
+        var cid = _chatId;
+        _sentTypingStart = false;
+        _ = App.Api.SendTypingAsync(cid, false);
+    }
+
+    public void OnTypingEvent(string chatId, List<string> userIds)
+    {
+        if (chatId != _chatId) return;
+        _typingUsers = userIds.ToHashSet();
+        UpdateTypingIndicator();
+    }
+
+    private void UpdateTypingIndicator()
+    {
+        if (TypingIndicator == null) return;
+        if (_typingUsers.Count == 0)
+        {
+            TypingIndicator.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var names = _typingUsers
+            .Select(uid => _participantMap.TryGetValue(uid, out var u)
+                ? (u.FullName ?? u.Username ?? u.DisplayText ?? uid)
+                : uid)
+            .ToList();
+        string text;
+        if (names.Count == 1) text = $"{names[0]} is typing...";
+        else if (names.Count == 2) text = $"{names[0]} and {names[1]} are typing...";
+        else text = "Several people are typing...";
+        TypingIndicatorText.Text = text;
+        TypingIndicator.Visibility = Visibility.Visible;
+    }
+
+    public void OnReceiptEvent(string chatId, string userId, string eventId, string timestamp)
+    {
+        if (chatId != _chatId) return;
+        _roomReadReceipts[userId] = new BeeperReadReceipt { UserId = userId, EventId = eventId, Timestamp = timestamp };
+        if (_allMessages.Count > 0)
+        {
+            for (int i = MsgStack.Children.Count - 1; i >= 0; i--)
+            {
+                if (MsgStack.Children[i] is FrameworkElement fe && fe.Tag as string == "read_receipt_row")
+                    MsgStack.Children.RemoveAt(i);
+            }
+            AppendReadReceiptRow();
+        }
+    }
+
+    private FrameworkElement BuildLinkPreviewCard(BeeperLinkPreview preview, bool isOwn)
+    {
+        var card = new Grid
+        {
+            MaxWidth = 280,
+            Margin = new Thickness(0, 6, 0, 0),
+            Background = B(Surface),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 10, 8),
+        };
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        if (!string.IsNullOrEmpty(preview.ImageUrl))
+        {
+            var bmp = new BitmapImage { DecodePixelWidth = 120, DecodePixelHeight = 120 };
+            try { bmp.UriSource = new Uri(preview.ImageUrl); } catch { }
+            var thumb = new Border
+            {
+                Width = 54, Height = 54,
+                CornerRadius = new CornerRadius(6),
+                Margin = new Thickness(0, 0, 10, 0),
+                Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill, Width = 54, Height = 54 },
+            };
+            thumb.Loaded += (s, _) =>
+            {
+                ((Border)s).Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, 54, 54) };
+            };
+            Grid.SetColumn(thumb, 0);
+            card.Children.Add(thumb);
+        }
+
+        var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        if (!string.IsNullOrEmpty(preview.Title))
+            info.Children.Add(Lbl(preview.Title, 11, Fg1, true, maxLines: 2));
+        if (!string.IsNullOrEmpty(preview.Description))
+            info.Children.Add(Lbl(preview.Description, 10, Fg2, maxLines: 2, margin: new Thickness(0, 2, 0, 0)));
+        Grid.SetColumn(info, 1);
+        card.Children.Add(info);
+
+        var capUrl = preview.Url;
+        card.Tapped += (s, e) =>
+        {
+            try
+            {
+                if (Uri.TryCreate(capUrl, UriKind.Absolute, out var uri))
+                    _ = Windows.System.Launcher.LaunchUriAsync(uri);
+            }
+            catch { }
+        };
+
+        return card;
     }
 
     private FrameworkElement BuildReplyBar(string linkedMessageId, bool isOwn)
@@ -2757,6 +3019,8 @@ public sealed partial class MessageView : UserControl
         var text = MsgInput.Text?.Trim() ?? "";
         MsgInput.Text = "";
         SendBtn.IsEnabled = false;
+        _typingStopTimer?.Stop();
+        SendTypingStop();
 
         if (!string.IsNullOrEmpty(_editingMessageId))
         {
@@ -2810,6 +3074,7 @@ public sealed partial class MessageView : UserControl
                             Timestamp = DateTimeOffset.Now.ToString("o"),
                             Type = msgType,
                             SenderName = "You",
+                            Status = MessageStatus.Sent,
                             Attachments =
                             [
                                 new BeeperAttachment { FileName = att.FileName, MimeType = att.MimeType, SrcURL = resolvedSrc }
@@ -2832,52 +3097,80 @@ public sealed partial class MessageView : UserControl
 
             if (hasText)
             {
+                var tempId = $"pending:{Guid.NewGuid():N}";
+                var optimistic = new BeeperMessage
+                {
+                    Id = tempId,
+                    Text = text,
+                    IsSender = true,
+                    Timestamp = DateTimeOffset.Now.ToString("o"),
+                    Type = "TEXT",
+                    SenderName = "You",
+                    LinkedMessageId = replyId,
+                    Status = MessageStatus.Sending,
+                };
+                _messageMap[tempId] = optimistic;
+                _allMessages.Add(optimistic);
+                var bubble = MakeBubble(optimistic, false, false);
+                MsgStack.Children.Add(bubble);
+                AnimateBubbleIn(bubble);
+                ScrollToBottom();
                 try
                 {
                     var sendResult = await App.Api.SendMessageAsync(_chatId, text, replyId);
-                    var optimistic = new BeeperMessage
-                    {
-                        Text = text,
-                        IsSender = true,
-                        Timestamp = DateTimeOffset.Now.ToString("o"),
-                        Type = "TEXT",
-                        SenderName = "You",
-                        LinkedMessageId = replyId
-                    };
                     if (sendResult?.PendingMessageID != null)
                     {
+                        _messageMap.Remove(tempId);
                         optimistic.Id = sendResult.PendingMessageID;
                         _messageMap[optimistic.Id] = optimistic;
+                        UpdateBubbleTag(tempId, optimistic.Id);
                     }
-                    _allMessages.Add(optimistic);
-                    var bubble = MakeBubble(optimistic, false, false);
-                    MsgStack.Children.Add(bubble);
-                    AnimateBubbleIn(bubble);
-                    ScrollToBottom();
+                    optimistic.Status = MessageStatus.Sent;
+                    UpdateBubbleForMessage(optimistic);
                 }
-                catch { }
+                catch
+                {
+                    optimistic.Status = MessageStatus.Failed;
+                    UpdateBubbleForMessage(optimistic);
+                }
             }
         }
         else if (hasText)
         {
+            var tempId = $"pending:{Guid.NewGuid():N}";
             var optimistic = new BeeperMessage
             {
+                Id = tempId,
                 Text = text,
                 IsSender = true,
                 Timestamp = DateTimeOffset.Now.ToString("o"),
                 Type = "TEXT",
                 SenderName = "You",
-                LinkedMessageId = replyId
+                LinkedMessageId = replyId,
+                Status = MessageStatus.Sending,
             };
+            _messageMap[tempId] = optimistic;
             _allMessages.Add(optimistic);
             MsgStack.Children.Add(MakeBubble(optimistic, false, false));
             ScrollToBottom();
 
-            var sendResult = await App.Api.SendMessageAsync(_chatId, text, replyId);
-            if (sendResult?.PendingMessageID != null && string.IsNullOrEmpty(optimistic.Id))
+            try
             {
-                optimistic.Id = sendResult.PendingMessageID;
-                _messageMap[optimistic.Id] = optimistic;
+                var sendResult = await App.Api.SendMessageAsync(_chatId, text, replyId);
+                if (sendResult?.PendingMessageID != null)
+                {
+                    _messageMap.Remove(tempId);
+                    optimistic.Id = sendResult.PendingMessageID;
+                    _messageMap[optimistic.Id] = optimistic;
+                    UpdateBubbleTag(tempId, optimistic.Id);
+                }
+                optimistic.Status = MessageStatus.Sent;
+                UpdateBubbleForMessage(optimistic);
+            }
+            catch
+            {
+                optimistic.Status = MessageStatus.Failed;
+                UpdateBubbleForMessage(optimistic);
             }
         }
         MsgInput.Focus(FocusState.Programmatic);
@@ -3246,7 +3539,7 @@ public sealed partial class MessageView : UserControl
         }
 
         if (mentionDisplayNames.Count == 0)
-            return inlines;
+            return ApplyLinkInlines(inlines, isOwn);
 
         var mentionColor = isOwn ? SentFg : Accent;
         var processed = new List<Inline>();
@@ -3325,7 +3618,72 @@ public sealed partial class MessageView : UserControl
             }
         }
 
-        return processed;
+        return ApplyLinkInlines(processed, isOwn);
+    }
+
+    private static readonly Regex _linkRegex = new(@"(https?://[^\s<>\]]+)|([\w.+-]+@[\w-]+\.[\w.-]+)", RegexOptions.Compiled);
+
+    private List<Inline> ApplyLinkInlines(List<Inline> inlines, bool isOwn)
+    {
+        var result = new List<Inline>();
+        var linkColor = isOwn ? SentFg : Accent;
+
+        foreach (var inline in inlines)
+        {
+            if (inline is not Run run ||
+                (run.FontFamily?.Source?.Contains("Cascadia", StringComparison.OrdinalIgnoreCase) == true) ||
+                (run.FontFamily?.Source?.Contains("Consolas", StringComparison.OrdinalIgnoreCase) == true))
+            {
+                result.Add(inline);
+                continue;
+            }
+
+            var runText = run.Text;
+            var matches = _linkRegex.Matches(runText);
+            if (matches.Count == 0)
+            {
+                result.Add(inline);
+                continue;
+            }
+
+            int pos = 0;
+            foreach (Match m in matches)
+            {
+                if (m.Index > pos)
+                    result.Add(new Run { Text = runText[pos..m.Index], Foreground = run.Foreground, FontStyle = run.FontStyle, FontWeight = run.FontWeight, TextDecorations = run.TextDecorations });
+
+                var linkText = m.Value;
+                Uri? uri = null;
+                if (m.Groups[1].Success)
+                {
+                    Uri.TryCreate(linkText, UriKind.Absolute, out uri);
+                }
+                else if (m.Groups[2].Success)
+                {
+                    Uri.TryCreate("mailto:" + linkText, UriKind.Absolute, out uri);
+                }
+
+                if (uri != null)
+                {
+                    var hyperlink = new Microsoft.UI.Xaml.Documents.Hyperlink
+                    {
+                        NavigateUri = uri,
+                        Foreground = B(linkColor),
+                        UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
+                    };
+                    hyperlink.Inlines.Add(new Run { Text = linkText });
+                    result.Add(hyperlink);
+                }
+                else
+                {
+                    result.Add(new Run { Text = linkText, Foreground = run.Foreground });
+                }
+                pos = m.Index + m.Length;
+            }
+            if (pos < runText.Length)
+                result.Add(new Run { Text = runText[pos..], Foreground = run.Foreground, FontStyle = run.FontStyle, FontWeight = run.FontWeight, TextDecorations = run.TextDecorations });
+        }
+        return result;
     }
 
     private static void AnimateBubbleIn(FrameworkElement element)
@@ -3625,18 +3983,22 @@ public sealed partial class MessageView : UserControl
         var chatIdCopy = _chatId;
         var fileName = $"gif_{gif.Id}.gif";
 
+        var tempId = $"pending:{Guid.NewGuid():N}";
         var optimistic = new BeeperMessage
         {
+            Id = tempId,
             Text = null,
             IsSender = true,
             Timestamp = DateTimeOffset.Now.ToString("o"),
             Type = "IMAGE",
             SenderName = "You",
+            Status = MessageStatus.Sending,
             Attachments =
             [
                 new BeeperAttachment { FileName = fileName, MimeType = "image/gif", SrcURL = gif.FullUrl, IsGif = true }
             ]
         };
+        _messageMap[tempId] = optimistic;
         _allMessages.Add(optimistic);
         var bubble = MakeBubble(optimistic, false, false);
         MsgStack.Children.Add(bubble);
@@ -3658,12 +4020,20 @@ public sealed partial class MessageView : UserControl
 
                 if (attachResult?.PendingMessageID != null)
                 {
+                    _messageMap.Remove(tempId);
                     optimistic.Id = attachResult.PendingMessageID;
                     _messageMap[optimistic.Id] = optimistic;
+                    UpdateBubbleTag(tempId, optimistic.Id);
                 }
+                optimistic.Status = MessageStatus.Sent;
+                UpdateBubbleForMessage(optimistic);
             }
         }
-        catch { }
+        catch
+        {
+            optimistic.Status = MessageStatus.Failed;
+            UpdateBubbleForMessage(optimistic);
+        }
     }
 
     private void OnDragOver(object sender, DragEventArgs e)

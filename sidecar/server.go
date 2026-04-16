@@ -65,6 +65,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /v1/chats/{chatID}/mute", s.withAuth(s.handleMuteChat))
 	mux.HandleFunc("POST /v1/chats/{chatID}/unmute", s.withAuth(s.handleUnmuteChat))
 	mux.HandleFunc("POST /v1/chats/{chatID}/markread", s.withAuth(s.handleMarkRead))
+	mux.HandleFunc("POST /v1/chats/{chatID}/typing", s.withAuth(s.handleTypingRequest))
 	mux.HandleFunc("GET /v1/chats/{chatID}/messages", s.withAuth(s.handleGetMessages))
 	mux.HandleFunc("POST /v1/chats/{chatID}/messages", s.withAuth(s.handleSendMessage))
 	mux.HandleFunc("PUT /v1/chats/{chatID}/messages/{messageID}", s.withAuth(s.handleEditMessage))
@@ -529,6 +530,22 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 		err = s.mc.MarkRead(r.Context(), chatID)
 	}
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "UNKNOWN_ERROR", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleTypingRequest(w http.ResponseWriter, r *http.Request) {
+	chatID := r.PathValue("chatID")
+	var req struct {
+		Typing bool `json:"typing"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if err := s.mc.SendTyping(r.Context(), chatID, req.Typing); err != nil {
 		writeError(w, http.StatusInternalServerError, "UNKNOWN_ERROR", err.Error())
 		return
 	}

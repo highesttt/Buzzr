@@ -61,6 +61,8 @@ public sealed partial class ShellPage : Page
 
         ChatList.ChatSelected += (chat) => _ = MessagePanel.LoadChat(chat);
         ChatList.MessageReceived += (chatId, msgJson) => MessagePanel.OnNewMessage(chatId, msgJson);
+        ChatList.TypingChanged += (chatId, users) => MessagePanel.OnTypingEvent(chatId, users);
+        ChatList.ReceiptReceived += (chatId, userId, eventId, ts) => MessagePanel.OnReceiptEvent(chatId, userId, eventId, ts);
         ChatList.ChatsLoaded += UpdateDiscordSubIcons;
 
         AllChatsBtn.Click += (s, e) =>

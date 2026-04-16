@@ -188,6 +188,15 @@ public class BeeperApiService : IDisposable
         await PostAsync<object>($"/v1/chats/{Uri.EscapeDataString(chatId)}/markread", body);
     }
 
+    public async Task SendTypingAsync(string chatId, bool typing)
+    {
+        try
+        {
+            await PostAsync<object>($"/v1/chats/{Uri.EscapeDataString(chatId)}/typing", new { typing });
+        }
+        catch { }
+    }
+
     public async Task<List<BeeperChat>> GetAllChatsAsync(string? accountId = null)
     {
         var all = new List<BeeperChat>();
@@ -558,6 +567,8 @@ public class MessagesResponse
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 
+public enum MessageStatus { None, Sending, Sent, Failed }
+
 public class BeeperMessage
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";
@@ -577,7 +588,27 @@ public class BeeperMessage
     [JsonPropertyName("isEdited")] public bool IsEdited { get; set; }
     [JsonPropertyName("editedAt")] public string? EditedAt { get; set; }
     [JsonPropertyName("mentions")] public List<BeeperMention>? Mentions { get; set; }
+    [JsonPropertyName("linkPreview")] public BeeperLinkPreview? LinkPreview { get; set; }
+    [JsonIgnore] public MessageStatus Status { get; set; } = MessageStatus.None;
+    [JsonIgnore] public List<BeeperReadReceipt>? ReadBy { get; set; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public class BeeperLinkPreview
+{
+    [JsonPropertyName("url")] public string Url { get; set; } = "";
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("description")] public string? Description { get; set; }
+    [JsonPropertyName("imageUrl")] public string? ImageUrl { get; set; }
+    [JsonPropertyName("imageWidth")] public int ImageWidth { get; set; }
+    [JsonPropertyName("imageHeight")] public int ImageHeight { get; set; }
+}
+
+public class BeeperReadReceipt
+{
+    public string UserId { get; set; } = "";
+    public string? EventId { get; set; }
+    public string? Timestamp { get; set; }
 }
 
 public class BeeperMention
