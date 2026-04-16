@@ -228,6 +228,39 @@ func sortRooms(rooms []*Room) {
 	})
 }
 
+func (s *Store) ResolveRootSpaces() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := 0
+	for _, room := range s.rooms {
+		if room.SpaceID == "" {
+			continue
+		}
+		root := room.SpaceID
+		visited := map[string]bool{room.ID: true}
+		for {
+			if visited[root] {
+				break
+			}
+			visited[root] = true
+			parent, ok := s.rooms[root]
+			if !ok || parent.SpaceID == "" {
+				break
+			}
+			root = parent.SpaceID
+		}
+		if root != room.SpaceID {
+			room.SpaceID = root
+			if s.db != nil {
+				s.db.SaveRoom(room)
+			}
+			changed++
+		}
+	}
+	return changed
+}
+
 func (s *Store) SetAccount(acct *Account) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

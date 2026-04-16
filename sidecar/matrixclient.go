@@ -467,7 +467,8 @@ func (mc *MatrixClient) VerificationReady(ctx context.Context, txnID id.Verifica
 		Str("txnID", string(txnID)).
 		Str("otherDevice", string(otherDeviceID)).
 		Bool("supportsSAS", supportsSAS).
-		Msg("Verification ready, other device accepted")
+		Bool("supportsScanQR", supportsScanQRCode).
+		Msg(">>> VerificationReady CALLED <<<")
 
 	mc.verifyState.mu.Lock()
 	mc.verifyState.Status = "ready"
@@ -491,7 +492,7 @@ func (mc *MatrixClient) VerificationCancelled(ctx context.Context, txnID id.Veri
 		Str("txnID", string(txnID)).
 		Str("code", string(code)).
 		Str("reason", reason).
-		Msg("Verification cancelled")
+		Msg(">>> VerificationCancelled CALLED <<<")
 
 	mc.verifyState.mu.Lock()
 	defer mc.verifyState.mu.Unlock()
@@ -717,6 +718,12 @@ func (mc *MatrixClient) StartDeviceVerification(ctx context.Context) (string, er
 	mc.verifyState.mu.Unlock()
 
 	log.Info().Str("txnID", string(txnID)).Msg("Self-verification started")
+
+	mc.mu.RLock()
+	syncing := mc.syncing
+	mc.mu.RUnlock()
+	log.Info().Bool("syncing", syncing).Msg("Sync state at verification start")
+
 	return string(txnID), nil
 }
 
@@ -774,6 +781,7 @@ func (mc *MatrixClient) registerEventHandlers() {
 	syncer.OnEventType(event.StateRoomAvatar, mc.handleRoomAvatar)
 	syncer.OnEventType(event.StateEncryption, mc.handleEncryption)
 	syncer.OnEventType(event.StateTopic, mc.handleTopic)
+	syncer.OnEventType(event.StateSpaceParent, mc.handleSpaceParent)
 	syncer.OnEventType(event.EphemeralEventReceipt, mc.handleReceipt)
 	syncer.OnEventType(event.AccountDataRoomTags, mc.handleRoomTags)
 
@@ -955,6 +963,19 @@ func (mc *MatrixClient) handleRoomAvatar(ctx context.Context, evt *event.Event) 
 	mc.store.SetRoom(room)
 }
 
+func (mc *MatrixClient) handleSpaceParent(ctx context.Context, evt *event.Event) {
+	if evt.StateKey == nil || *evt.StateKey == "" {
+		return
+	}
+	parentID := string(*evt.StateKey)
+	room := mc.store.EnsureRoom(string(evt.RoomID))
+	if room.SpaceID == "" {
+		room.SpaceID = parentID
+		mc.store.SetRoom(room)
+		log.Debug().Str("room", string(evt.RoomID)).Str("space", parentID).Msg("Set space parent")
+	}
+}
+
 func (mc *MatrixClient) handleEncryption(ctx context.Context, evt *event.Event) {
 	room := mc.store.EnsureRoom(string(evt.RoomID))
 	room.Encrypted = true
@@ -1107,6 +1128,10 @@ func (mc *MatrixClient) onSyncResponse(ctx context.Context, resp *mautrix.RespSy
 		mc.store.DeleteRoom(string(roomID))
 	}
 
+	if mc.store.ResolveRootSpaces() > 0 {
+		mc.wsHub.Broadcast(WSEvent{Type: "spaces.resolved"})
+	}
+
 	log.Debug().
 		Int("joined", len(resp.Rooms.Join)).
 		Int("totalRooms", mc.store.RoomCount()).
@@ -1148,6 +1173,10 @@ func (mc *MatrixClient) processStateEvent(evt *event.Event) {
 	case event.StateTopic:
 		if c := evt.Content.AsTopic(); c != nil {
 			room.Topic = c.Topic
+		}
+	case event.StateSpaceParent:
+		if evt.StateKey != nil && *evt.StateKey != "" && room.SpaceID == "" {
+			room.SpaceID = *evt.StateKey
 		}
 	}
 

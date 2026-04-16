@@ -14,6 +14,7 @@ public sealed partial class ShellPage : Page
 {
     private List<BeeperAccount> _accounts = [];
     private string? _selectedAccountId;
+    private string? _selectedSpaceId;
 
     public static Action? FocusSearch;
     public static Action? OpenNewChat;
@@ -31,6 +32,7 @@ public sealed partial class ShellPage : Page
         AllChatsBtn.Click += (s, e) =>
         {
             _selectedAccountId = null;
+            _selectedSpaceId = null;
             HighlightSelectedAccount();
             ChatList.FilterByAccount(null);
         };
@@ -107,8 +109,11 @@ public sealed partial class ShellPage : Page
             return idx >= 0 ? idx : 999;
         }).ToList();
 
+        var hidden = GetHiddenNetworks();
+
         foreach (var account in _accounts)
         {
+            if (hidden.Contains(account.AccountId)) continue;
             var networkName = NetName(account.AccountId, account.Network);
             var iconContainer = new Grid { Width = 44, Height = 40 };
             iconContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
@@ -143,6 +148,7 @@ public sealed partial class ShellPage : Page
             ToolTipService.SetToolTip(iconContainer, tooltipText);
 
             var capturedId = account.AccountId;
+            iconContainer.Tag = capturedId;
 
             iconContainer.CanDrag = true;
             iconContainer.AllowDrop = true;
@@ -187,15 +193,17 @@ public sealed partial class ShellPage : Page
 
             iconContainer.PointerPressed += (s, _) =>
             {
-                if (_selectedAccountId == capturedId)
+                if (_selectedAccountId == capturedId && _selectedSpaceId == null)
                 {
                     _selectedAccountId = null;
+                    _selectedSpaceId = null;
                     HighlightSelectedAccount();
                     ChatList.FilterByAccount(null);
                 }
                 else
                 {
                     _selectedAccountId = capturedId;
+                    _selectedSpaceId = null;
                     HighlightSelectedAccount();
                     ChatList.FilterByAccount(capturedId);
                 }
@@ -211,7 +219,100 @@ public sealed partial class ShellPage : Page
                 iconBorder.Opacity = 1.0;
             };
 
+            AddNetworkContextMenu(iconContainer, capturedId, networkName);
             AccountIconsStack.Children.Add(iconContainer);
+
+            var net = ResolveNetwork(account.AccountId, account.Network);
+            if (net == "discord")
+            {
+                var spaceIds = ChatList.GetDistinctSpaceIds(account.AccountId);
+                foreach (var spaceId in spaceIds)
+                {
+                    var spaceKey = $"space:{account.AccountId}:{spaceId}";
+                    if (hidden.Contains(spaceKey)) continue;
+
+                    var spaceName = ChatList.GetSpaceName(account.AccountId, spaceId) ?? "Server";
+                    var spaceAvatar = ChatList.GetSpaceAvatar(account.AccountId, spaceId);
+
+                    var spaceContainer = new Grid { Width = 44, Height = 40, Tag = $"{account.AccountId}:{spaceId}" };
+                    spaceContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+                    spaceContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    spaceContainer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+
+                    var spaceSel = new Border
+                    {
+                        Width = 3, Height = 18,
+                        CornerRadius = new CornerRadius(0, 2, 2, 0),
+                        Background = B(Accent),
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Visibility = Visibility.Collapsed,
+                        Tag = "space_sel"
+                    };
+                    Grid.SetColumn(spaceSel, 0);
+                    spaceContainer.Children.Add(spaceSel);
+
+                    var spaceContent = new Grid();
+                    var initial = spaceName.Length > 0 ? spaceName[0].ToString().ToUpper() : "?";
+                    spaceContent.Children.Add(new TextBlock
+                    {
+                        Text = initial,
+                        FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                        Foreground = B(Microsoft.UI.Colors.White),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    });
+
+                    if (!string.IsNullOrEmpty(spaceAvatar))
+                    {
+                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage { DecodePixelWidth = 64, DecodePixelHeight = 64 };
+                        try { bmp.UriSource = new Uri(spaceAvatar); } catch { }
+                        var img = new Image { Source = bmp, Stretch = Stretch.UniformToFill, Opacity = 0 };
+                        img.ImageOpened += (s, _) =>
+                        {
+                            ((Image)s).Opacity = 1;
+                            if (((Image)s).Parent is Grid g && g.Children[0] is TextBlock tb)
+                                tb.Visibility = Visibility.Collapsed;
+                        };
+                        img.ImageFailed += (s, _) => ((Image)s).Visibility = Visibility.Collapsed;
+                        spaceContent.Children.Add(img);
+                    }
+
+                    var spaceBorder = new Border
+                    {
+                        Width = 32, Height = 32,
+                        CornerRadius = new CornerRadius(16),
+                        Background = B(Windows.UI.Color.FromArgb(255, 88, 101, 242)),
+                        Child = spaceContent,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    spaceBorder.Loaded += (s, _) =>
+                    {
+                        var b = (Border)s;
+                        b.Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, 32, 32) };
+                    };
+                    Grid.SetColumn(spaceBorder, 1);
+                    spaceContainer.Children.Add(spaceBorder);
+
+                    ToolTipService.SetToolTip(spaceContainer, spaceName);
+
+                    var capAcct = account.AccountId;
+                    var capSpace = spaceId;
+                    spaceContainer.PointerPressed += (s, _) =>
+                    {
+                        _selectedAccountId = capAcct;
+                        _selectedSpaceId = capSpace;
+                        HighlightSelectedAccount();
+                        ChatList.FilterByAccount(capAcct, capSpace);
+                    };
+                    spaceContainer.PointerEntered += (s, _) => spaceBorder.Opacity = 0.8;
+                    spaceContainer.PointerExited += (s, _) => spaceBorder.Opacity = 1.0;
+
+                    AddNetworkContextMenu(spaceContainer, spaceKey, spaceName, true);
+                    AccountIconsStack.Children.Add(spaceContainer);
+                }
+            }
         }
     }
 
@@ -233,24 +334,81 @@ public sealed partial class ShellPage : Page
 
     private void HighlightSelectedAccount()
     {
-        int index = 0;
         foreach (var child in AccountIconsStack.Children)
         {
-            if (child is Grid container && index < _accounts.Count)
+            if (child is not Grid container) continue;
+            foreach (var sub in container.Children)
             {
-                var acctId = _accounts[index].AccountId;
-                foreach (var sub in container.Children)
+                if (sub is Border b && b.Tag is string tag)
                 {
-                    if (sub is Border b && b.Tag as string == "sel")
-                        AnimateIndicator(b, acctId == _selectedAccountId);
+                    if (tag == "sel")
+                    {
+                        var acctId = container.Tag as string;
+                        AnimateIndicator(b, acctId == _selectedAccountId && _selectedSpaceId == null);
+                    }
+                    else if (tag == "space_sel")
+                    {
+                        var spaceKey = container.Tag as string;
+                        AnimateIndicator(b, spaceKey == $"{_selectedAccountId}:{_selectedSpaceId}");
+                    }
                 }
-                index++;
             }
         }
 
         var allIcon = AllChatsBtn.Content as FontIcon;
         if (allIcon != null)
             allIcon.Foreground = B(_selectedAccountId == null ? Accent : Fg3);
+    }
+
+    private HashSet<string> GetHiddenNetworks()
+    {
+        var hidden = App.Settings.GetString("hidden_networks");
+        return string.IsNullOrEmpty(hidden) ? [] : hidden.Split(',').ToHashSet();
+    }
+
+    private void SetHiddenNetworks(HashSet<string> hidden)
+    {
+        App.Settings.SetString("hidden_networks", hidden.Count > 0 ? string.Join(",", hidden) : null);
+    }
+
+    private void AddNetworkContextMenu(FrameworkElement element, string id, string displayName, bool isSpace = false)
+    {
+        var flyout = new MenuFlyout();
+        var hidden = GetHiddenNetworks();
+
+        var hideItem = new MenuFlyoutItem
+        {
+            Text = $"Hide {displayName}",
+            Icon = new FontIcon { Glyph = "\uED1A" }
+        };
+        hideItem.Click += (s, e) =>
+        {
+            var h = GetHiddenNetworks();
+            h.Add(id);
+            SetHiddenNetworks(h);
+            RenderAccountIcons();
+            UpdateDiscordSubIcons();
+        };
+        flyout.Items.Add(hideItem);
+
+        if (hidden.Count > 0)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+            var showAllItem = new MenuFlyoutItem
+            {
+                Text = "Show all networks",
+                Icon = new FontIcon { Glyph = "\uE7B3" }
+            };
+            showAllItem.Click += (s, e) =>
+            {
+                SetHiddenNetworks([]);
+                RenderAccountIcons();
+                UpdateDiscordSubIcons();
+            };
+            flyout.Items.Add(showAllItem);
+        }
+
+        element.ContextFlyout = flyout;
     }
 
     private void UpdateDiscordSubIcons()
@@ -279,72 +437,20 @@ public sealed partial class ShellPage : Page
         {
             AppLog.Write($"[Accounts] Added {added} synthetic account(s), re-rendering icons");
             ChatList.SetAccounts(_accounts);
-            RenderAccountIcons();
         }
 
+        _ = PreloadAndRenderAsync();
+    }
+
+    private async Task PreloadAndRenderAsync()
+    {
         foreach (var account in _accounts)
         {
             var net = ResolveNetwork(account.AccountId, account.Network);
             if (net == "discord")
-            {
-                var spaceIds = ChatList.GetDistinctSpaceIds(account.AccountId);
-                AppLog.Write($"[Discord] Account {account.AccountId}: {spaceIds.Count} space IDs found");
-                foreach (var sid in spaceIds.Take(5))
-                    AppLog.Write($"  SpaceId={sid}, Name={ChatList.GetSpaceName(account.AccountId, sid)}");
-            }
+                await ChatList.PreloadSpaceRoomsAsync(account.AccountId);
         }
-
-        int insertOffset = 0;
-        for (int i = 0; i < _accounts.Count; i++)
-        {
-            var account = _accounts[i];
-            var net = ResolveNetwork(account.AccountId, account.Network);
-            if (net != "discord") continue;
-
-            var spaceIds = ChatList.GetDistinctSpaceIds(account.AccountId);
-            if (spaceIds.Count <= 1) continue;
-
-            int insertPos = i + 1 + insertOffset;
-            int serverNum = 0;
-            foreach (var spaceId in spaceIds)
-            {
-                serverNum++;
-                var spaceName = ChatList.GetSpaceName(account.AccountId, spaceId) ?? $"Server {serverNum}";
-
-                var subIcon = new Grid { Width = 36, Height = 36 };
-                var dot = NetDot(account.AccountId, 24, account.Network);
-                dot.HorizontalAlignment = HorizontalAlignment.Center;
-                dot.VerticalAlignment = VerticalAlignment.Center;
-                dot.Child = new TextBlock
-                {
-                    Text = spaceName.Length > 0 ? spaceName[0].ToString().ToUpper() : "?",
-                    FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-                    Foreground = B(Microsoft.UI.Colors.White),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                subIcon.Children.Add(dot);
-                ToolTipService.SetToolTip(subIcon, spaceName);
-
-                var capturedAccountId = account.AccountId;
-                var capturedSpaceId = spaceId;
-                subIcon.PointerPressed += (s, _) =>
-                {
-                    _selectedAccountId = capturedAccountId;
-                    HighlightSelectedAccount();
-                    ChatList.FilterByAccount(capturedAccountId, capturedSpaceId);
-                };
-                subIcon.PointerEntered += (s, _) => dot.Opacity = 0.8;
-                subIcon.PointerExited += (s, _) => dot.Opacity = 1.0;
-
-                if (insertPos <= AccountIconsStack.Children.Count)
-                    AccountIconsStack.Children.Insert(insertPos, subIcon);
-                else
-                    AccountIconsStack.Children.Add(subIcon);
-                insertPos++;
-                insertOffset++;
-            }
-        }
+        RenderAccountIcons();
     }
 
     private void UpdateSettingsFlyout()

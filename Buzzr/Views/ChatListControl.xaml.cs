@@ -45,6 +45,7 @@ public sealed partial class ChatListControl : UserControl
     private static readonly ConcurrentDictionary<string, BitmapImage> _avatarCache = new();
     private CancellationTokenSource? _wsCts;
     private bool _censorMode;
+    private HashSet<string> _collapsedSpaceIds = [];
     private readonly DateTime _startupTime = DateTime.UtcNow;
 
     private static readonly string _avatarCacheDir = Path.Combine(
@@ -93,12 +94,84 @@ public sealed partial class ChatListControl : UserControl
         ApplyFilters();
     }
 
+    private string ResolveRootSpaceId(string spaceId)
+    {
+        var visited = new HashSet<string>();
+        var current = spaceId;
+        while (true)
+        {
+            if (!visited.Add(current)) break;
+            var parent = _allChats.FirstOrDefault(c => c.Id == current);
+            if (parent == null || string.IsNullOrEmpty(parent.SpaceId)) break;
+            current = parent.SpaceId;
+        }
+        return current;
+    }
+
+    private bool IsDescendantOfSpace(string spaceId, string targetRootId)
+    {
+        var visited = new HashSet<string>();
+        var current = spaceId;
+        while (!string.IsNullOrEmpty(current))
+        {
+            if (current == targetRootId) return true;
+            if (!visited.Add(current)) break;
+            var parent = _allChats.FirstOrDefault(c => c.Id == current);
+            if (parent == null || string.IsNullOrEmpty(parent.SpaceId)) break;
+            current = parent.SpaceId;
+        }
+        return false;
+    }
+
     public List<string> GetDistinctSpaceIds(string accountId) =>
-        _allChats.Where(c => c.AccountId == accountId && !string.IsNullOrEmpty(c.SpaceId))
-            .Select(c => c.SpaceId!).Distinct().ToList();
+        _allChats
+            .Where(c => c.AccountId == accountId && !string.IsNullOrEmpty(c.SpaceId))
+            .GroupBy(c => c.SpaceId!)
+            .Where(g => g.Count() >= 3)
+            .Select(g => g.Key)
+            .ToList();
 
     public string? GetSpaceName(string accountId, string spaceId) =>
-        _allChats.FirstOrDefault(c => c.AccountId == accountId && c.SpaceId == spaceId)?.Title;
+        _allChats.FirstOrDefault(c => c.Id == spaceId)?.Title
+        ?? _allChats.FirstOrDefault(c => c.AccountId == accountId && c.SpaceId == spaceId)?.Title;
+
+    public async Task PreloadSpaceRoomsAsync(string accountId)
+    {
+        var spaceIds = GetDistinctSpaceIds(accountId);
+        var missing = spaceIds.Where(sid => !_allChats.Any(c => c.Id == sid)).ToList();
+        foreach (var sid in missing)
+        {
+            try
+            {
+                var fetched = await App.Api.GetChatAsync(sid);
+                if (fetched != null) _allChats.Add(fetched);
+            }
+            catch { }
+        }
+    }
+
+    public string? GetSpaceAvatar(string accountId, string spaceId)
+    {
+        var space = _allChats.FirstOrDefault(c => c.Id == spaceId);
+        if (space != null && !string.IsNullOrEmpty(space.AvatarUrl)) return space.AvatarUrl;
+        return _allChats.FirstOrDefault(c => c.AccountId == accountId && c.SpaceId == spaceId && !string.IsNullOrEmpty(c.AvatarUrl))?.AvatarUrl;
+    }
+
+    public int GetSpaceUnreadCount(string accountId, string spaceId)
+    {
+        var allDescendantIds = new HashSet<string> { spaceId };
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var c in _allChats)
+            {
+                if (!string.IsNullOrEmpty(c.SpaceId) && allDescendantIds.Contains(c.SpaceId) && allDescendantIds.Add(c.Id))
+                    changed = true;
+            }
+        }
+        return _allChats.Where(c => c.AccountId == accountId && !string.IsNullOrEmpty(c.SpaceId) && allDescendantIds.Contains(c.SpaceId)).Sum(c => c.UnreadCount);
+    }
 
     public List<string> GetAllChatAccountIds() =>
         _allChats.Select(c => c.AccountId).Distinct().ToList();
@@ -233,7 +306,7 @@ public sealed partial class ChatListControl : UserControl
         if (!string.IsNullOrEmpty(_accountFilter))
             filtered = filtered.Where(c => c.AccountId == _accountFilter);
         if (!string.IsNullOrEmpty(_spaceFilter))
-            filtered = filtered.Where(c => c.SpaceId == _spaceFilter);
+            filtered = filtered.Where(c => !string.IsNullOrEmpty(c.SpaceId) && IsDescendantOfSpace(c.SpaceId, _spaceFilter));
 
         filtered = _tabFilter switch
         {
@@ -244,8 +317,60 @@ public sealed partial class ChatListControl : UserControl
             _ => filtered.Where(c => !c.IsArchived && !IsLowPriority(c))
         };
 
-        RenderChats(filtered.ToList());
+        var result = filtered.ToList();
+        if (string.IsNullOrEmpty(_spaceFilter))
+            result = CollapseDiscordSpaces(result);
+
+        RenderChats(result);
         UpdateUnreadBadge();
+    }
+
+    private List<BeeperChat> CollapseDiscordSpaces(List<BeeperChat> chats)
+    {
+        _collapsedSpaceIds.Clear();
+        var result = new List<BeeperChat>();
+        var spaceGroups = new Dictionary<string, List<BeeperChat>>();
+
+        foreach (var chat in chats)
+        {
+            var net = ResolveNetwork(chat.AccountId);
+            if (net == "discord" && !string.IsNullOrEmpty(chat.SpaceId))
+            {
+                var rootId = ResolveRootSpaceId(chat.SpaceId);
+                if (!spaceGroups.ContainsKey(rootId))
+                    spaceGroups[rootId] = new List<BeeperChat>();
+                spaceGroups[rootId].Add(chat);
+            }
+            else
+            {
+                result.Add(chat);
+            }
+        }
+
+        foreach (var (rootSpaceId, channels) in spaceGroups)
+        {
+            var latest = channels.OrderByDescending(c => c.LastActivity ?? "").First();
+            var accountId = latest.AccountId;
+
+            var collapsed = new BeeperChat
+            {
+                Id = rootSpaceId,
+                AccountId = accountId,
+                Title = GetSpaceName(accountId, rootSpaceId) ?? "Server",
+                AvatarUrl = GetSpaceAvatar(accountId, rootSpaceId),
+                UnreadCount = channels.Sum(c => c.UnreadCount),
+                LastActivity = channels.Max(c => c.LastActivity),
+                Preview = latest.Preview,
+                SpaceId = rootSpaceId,
+                IsMuted = channels.All(c => c.IsMuted),
+                IsPinned = channels.Any(c => c.IsPinned),
+            };
+
+            _collapsedSpaceIds.Add(rootSpaceId);
+            result.Add(collapsed);
+        }
+
+        return result;
     }
 
     private async Task OnSearchChangedAsync()
@@ -379,6 +504,26 @@ public sealed partial class ChatListControl : UserControl
         ApplyFilters();
         StartRealTimeUpdates();
         ChatsLoaded?.Invoke();
+    }
+
+    private async Task ReloadChatsAsync()
+    {
+        try
+        {
+            var allChats = await App.Api.GetAllChatsAsync();
+            _allChats = allChats;
+            if (!string.IsNullOrEmpty(_selectedChatId))
+            {
+                var sel = _allChats.Find(c => c.Id == _selectedChatId);
+                if (sel != null) sel.UnreadCount = 0;
+            }
+            ApplyFilters();
+            ChatsLoaded?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[ChatList] ReloadChats error: {ex.Message}");
+        }
     }
 
     private async Task RefreshFirstPageAsync()
@@ -662,6 +807,12 @@ public sealed partial class ChatListControl : UserControl
 
     private void SelectChat(BeeperChat chat)
     {
+        if (_collapsedSpaceIds.Contains(chat.Id))
+        {
+            FilterByAccount(chat.AccountId, chat.Id);
+            return;
+        }
+
         _selectedChatId = chat.Id;
         _locallyReadChatIds.Add(chat.Id);
         bool hadUnread = chat.UnreadCount > 0;
@@ -760,7 +911,11 @@ public sealed partial class ChatListControl : UserControl
         var rightStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
         rightStack.Children.Add(Lbl(RelativeTime(chat.LastActivity), 11, Fg3));
         if (chat.UnreadCount > 0 && !_locallyReadChatIds.Contains(chat.Id))
-            rightStack.Children.Add(Badge(chat.UnreadCount));
+        {
+            var badge = Badge(chat.UnreadCount);
+            badge.HorizontalAlignment = HorizontalAlignment.Right;
+            rightStack.Children.Add(badge);
+        }
         Grid.SetColumn(rightStack, 2);
         row.Children.Add(rightStack);
 
@@ -1352,6 +1507,10 @@ public sealed partial class ChatListControl : UserControl
                         });
                     }
                 }
+            }
+            else if (evtType == "spaces.resolved")
+            {
+                DispatcherQueue.TryEnqueue(() => _ = ReloadChatsAsync());
             }
             else if (evtType == "tags.updated")
             {

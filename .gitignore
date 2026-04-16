@@ -33,3 +33,5 @@ API_REFERENCE.md
 
 # Test workflow
 .github/workflows/release.yml
+
+*.exe
