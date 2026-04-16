@@ -3622,42 +3622,45 @@ public sealed partial class MessageView : UserControl
     private async Task SendGifAsync(GifResult gif)
     {
         if (_chatId == null || string.IsNullOrEmpty(gif.FullUrl)) return;
+        var chatIdCopy = _chatId;
+        var fileName = $"gif_{gif.Id}.gif";
+
+        var optimistic = new BeeperMessage
+        {
+            Text = null,
+            IsSender = true,
+            Timestamp = DateTimeOffset.Now.ToString("o"),
+            Type = "IMAGE",
+            SenderName = "You",
+            Attachments =
+            [
+                new BeeperAttachment { FileName = fileName, MimeType = "image/gif", SrcURL = gif.FullUrl, IsGif = true }
+            ]
+        };
+        _allMessages.Add(optimistic);
+        var bubble = MakeBubble(optimistic, false, false);
+        MsgStack.Children.Add(bubble);
+        AnimateBubbleIn(bubble);
+        ScrollToBottom();
+
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             var gifBytes = await http.GetByteArrayAsync(gif.FullUrl);
             var base64 = Convert.ToBase64String(gifBytes);
-            var fileName = $"gif_{gif.Id}.gif";
 
             var asset = await App.Api.UploadBase64Async(base64, fileName, "image/gif");
             if (asset?.UploadID != null)
             {
                 var attachResult = await App.Api.SendMessageWithAttachmentAsync(
-                    _chatId, null, asset.UploadID, "image/gif", fileName,
+                    chatIdCopy, null, asset.UploadID, "image/gif", fileName,
                     gif.Width, gif.Height);
 
-                var optimistic = new BeeperMessage
-                {
-                    Text = null,
-                    IsSender = true,
-                    Timestamp = DateTimeOffset.Now.ToString("o"),
-                    Type = "IMAGE",
-                    SenderName = "You",
-                    Attachments =
-                    [
-                        new BeeperAttachment { FileName = fileName, MimeType = "image/gif", SrcURL = gif.PreviewUrl, IsGif = true }
-                    ]
-                };
                 if (attachResult?.PendingMessageID != null)
                 {
                     optimistic.Id = attachResult.PendingMessageID;
                     _messageMap[optimistic.Id] = optimistic;
                 }
-                _allMessages.Add(optimistic);
-                var bubble = MakeBubble(optimistic, false, false);
-                MsgStack.Children.Add(bubble);
-                AnimateBubbleIn(bubble);
-                ScrollToBottom();
             }
         }
         catch { }
