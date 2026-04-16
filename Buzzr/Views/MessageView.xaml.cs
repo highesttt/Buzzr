@@ -2792,11 +2792,10 @@ public sealed partial class MessageView : UserControl
                     var asset = await App.Api.UploadBase64Async(base64, att.FileName, att.MimeType);
                     if (asset?.UploadID != null)
                     {
-                        var caption = (i == attachments.Count - 1 && hasText) ? text : null;
                         int? sendWidth = att.Width ?? asset.Width;
                         int? sendHeight = att.Height ?? asset.Height;
                         var attachResult = await App.Api.SendMessageWithAttachmentAsync(
-                            _chatId, caption, asset.UploadID, att.MimeType, att.FileName,
+                            _chatId, null, asset.UploadID, att.MimeType, att.FileName,
                             sendWidth, sendHeight);
 
                         var resolvedSrc = att.LocalPath;
@@ -2807,7 +2806,6 @@ public sealed partial class MessageView : UserControl
                         var msgType = att.IsImage ? "IMAGE" : "FILE";
                         var optimistic = new BeeperMessage
                         {
-                            Text = caption,
                             IsSender = true,
                             Timestamp = DateTimeOffset.Now.ToString("o"),
                             Type = msgType,
@@ -2828,6 +2826,34 @@ public sealed partial class MessageView : UserControl
                         AnimateBubbleIn(bubble);
                         ScrollToBottom();
                     }
+                }
+                catch { }
+            }
+
+            if (hasText)
+            {
+                try
+                {
+                    var sendResult = await App.Api.SendMessageAsync(_chatId, text, replyId);
+                    var optimistic = new BeeperMessage
+                    {
+                        Text = text,
+                        IsSender = true,
+                        Timestamp = DateTimeOffset.Now.ToString("o"),
+                        Type = "TEXT",
+                        SenderName = "You",
+                        LinkedMessageId = replyId
+                    };
+                    if (sendResult?.PendingMessageID != null)
+                    {
+                        optimistic.Id = sendResult.PendingMessageID;
+                        _messageMap[optimistic.Id] = optimistic;
+                    }
+                    _allMessages.Add(optimistic);
+                    var bubble = MakeBubble(optimistic, false, false);
+                    MsgStack.Children.Add(bubble);
+                    AnimateBubbleIn(bubble);
+                    ScrollToBottom();
                 }
                 catch { }
             }
